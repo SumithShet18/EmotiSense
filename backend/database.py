@@ -184,6 +184,31 @@ def get_total_count() -> int:
     return _sqlite_get_total_count()
 
 
+def insert_explanation(
+    prediction_id: str,
+    reasoning: str,
+    token_importances: list | None = None,
+    modality_contributions: dict | None = None,
+    audio_features: dict | None = None,
+    attention_matrix: list | None = None,
+    uncertainty: dict | None = None,
+    secondary_emotions: list | None = None,
+) -> str | None:
+    if _use_supabase:
+        from supabase_client import insert_explanation as _si
+        return _si(
+            prediction_id=prediction_id,
+            reasoning=reasoning,
+            token_importances=token_importances or [],
+            modality_contributions=modality_contributions or {},
+            audio_features=audio_features,
+            attention_matrix=attention_matrix,
+            uncertainty=uncertainty or {},
+            secondary_emotions=secondary_emotions or [],
+        )
+    return None
+
+
 def search_predictions(query: str = "", emotion_filter: str = "", limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
     if _use_supabase:
         return supabase_search(query=query, emotion_filter=emotion_filter, limit=limit, offset=offset)

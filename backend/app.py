@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import ALLOWED_AUDIO_EXTENSIONS, MAX_AUDIO_SIZE_MB, SUPABASE_STORAGE_BUCKET
-from database import init_db, insert_prediction, get_all_predictions, get_prediction_by_id, get_total_count, search_predictions, upload_audio
+from database import init_db, insert_prediction, insert_explanation, get_all_predictions, get_prediction_by_id, get_total_count, search_predictions, upload_audio
 from schemas import HealthResponse, PredictResponse, HistoryItem, HistoryResponse
 from inference import predict_emotion
 from xai_schemas import XAIResponse
@@ -181,6 +181,24 @@ async def explain(
         confidence=result["prediction"]["confidence"],
         probabilities={p["emotion"]: p["probability"] for p in result["prediction"]["probabilities"]},
     )
+
+    try:
+        insert_explanation(
+            prediction_id=str(pred_id),
+            reasoning=result["explanation"]["reasoning"],
+            token_importances=result["explanation"]["token_importances"],
+            modality_contributions=result["explanation"]["modality_contributions"],
+            audio_features=result["explanation"]["audio_features"],
+            attention_matrix=(
+                result["explanation"]["attention_rollout"]["attention_matrix"]
+                if result["explanation"]["attention_rollout"]
+                else None
+            ),
+            uncertainty=result["explanation"]["uncertainty"],
+            secondary_emotions=result["explanation"]["secondary_emotions"],
+        )
+    except Exception as e:
+        logger.warning(f"Failed to store XAI explanation: {e}")
 
     return result
 

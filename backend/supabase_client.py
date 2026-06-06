@@ -112,3 +112,36 @@ def upload_audio(bucket: str, file_name: str, file_data: bytes) -> str:
 def delete_audio(bucket: str, file_name: str) -> None:
     client = get_client()
     client.storage.from_(bucket).remove([file_name])
+
+
+def insert_explanation(
+    prediction_id: str,
+    reasoning: str,
+    token_importances: list,
+    modality_contributions: dict,
+    audio_features: dict | None,
+    attention_matrix: list | None,
+    uncertainty: dict,
+    secondary_emotions: list,
+) -> str:
+    import uuid
+    from datetime import datetime, timezone
+
+    client = get_client()
+    row_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    data = {
+        "id": row_id,
+        "prediction_id": prediction_id,
+        "timestamp": now,
+        "reasoning": reasoning,
+        "token_importances": token_importances,
+        "modality_contributions": modality_contributions,
+        "audio_features": audio_features,
+        "attention_matrix": attention_matrix,
+        "uncertainty": uncertainty,
+        "secondary_emotions": secondary_emotions,
+        "created_at": now,
+    }
+    client.table("explanations").insert(data).execute()
+    return row_id
