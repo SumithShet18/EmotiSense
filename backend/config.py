@@ -12,6 +12,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_PATH = MODEL_DIR / "best_model.pth"
 
 DEVICE = os.getenv("EMOTISENSE_DEVICE", "cpu")
+DEMO_MODE = os.getenv("EMOTISENSE_DEMO", "true").lower() == "true"
 
 EMOTION_LABELS = ["angry", "happy", "sad", "neutral", "excited", "frustrated"]
 

@@ -1,18 +1,24 @@
 """
 Automatic speech transcription using faster-whisper.
-
-Transcribes audio files to text for use as MentalBERT input.
 """
 
-from faster_whisper import WhisperModel
+from config import DEMO_MODE
 
-_whisper_model: WhisperModel | None = None
-WHISPER_MODEL_SIZE = "large-v3"  # "tiny", "base", "small", "medium", "large-v3"
+try:
+    from faster_whisper import WhisperModel
+    HAS_WHISPER = True
+except ImportError:
+    HAS_WHISPER = False
+
+_whisper_model: "WhisperModel | None" = None
+WHISPER_MODEL_SIZE = "large-v3"
 
 
-def _get_whisper_model() -> WhisperModel:
+def _get_whisper_model():
     global _whisper_model
     if _whisper_model is None:
+        if not HAS_WHISPER:
+            raise RuntimeError("faster-whisper is not installed.")
         _whisper_model = WhisperModel(
             WHISPER_MODEL_SIZE,
             device="cpu",
@@ -22,6 +28,8 @@ def _get_whisper_model() -> WhisperModel:
 
 
 def transcribe_audio(audio_path: str) -> str:
+    if DEMO_MODE:
+        return "(demo transcription)"
     model = _get_whisper_model()
     segments, info = model.transcribe(
         audio_path,

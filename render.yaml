@@ -3,7 +3,9 @@ services:
     name: emotisense-backend
     runtime: python
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    startCommand: cd backend && uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: EMOTISENSE_DEMO
+        value: "true"
       - key: EMOTISENSE_DEVICE
         value: cpu

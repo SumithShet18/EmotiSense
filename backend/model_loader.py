@@ -1,23 +1,6 @@
-"""
-EmotiSense model architecture.
-
-Architecture:
-  - Cross-modal attention (MultiheadAttention, embed_dim=768)
-    fuses text features (MentalBERT) and audio features (HuBERT)
-  - Classifier head: Linear(768→256) → ReLU → Dropout → Linear(256→6)
-
-Checkpoint keys:
-  cross_attention.attention.in_proj_weight
-  cross_attention.attention.in_proj_bias
-  cross_attention.attention.out_proj.weight
-  cross_attention.attention.out_proj.bias
-  classifier.0.weight / bias
-  classifier.3.weight / bias
-"""
-
 import torch
 import torch.nn as nn
-from config import MODEL_PATH, DEVICE
+from config import MODEL_PATH, DEVICE, DEMO_MODE
 
 
 class CrossAttentionFusion(nn.Module):
@@ -65,9 +48,19 @@ class EmotiSenseModel(nn.Module):
         return logits
 
 
+class DemoModel(nn.Module):
+    def __init__(self, num_classes: int = 6):
+        super().__init__()
+        self.num_classes = num_classes
+
+    def forward(self, **kwargs) -> torch.Tensor:
+        return torch.randn(1, self.num_classes)
+
+
 class _ModelCache:
     instance: nn.Module | None = None
     device: torch.device | None = None
+    demo: bool = False
 
 _cache = _ModelCache()
 
@@ -77,15 +70,24 @@ def load_model() -> tuple[nn.Module, torch.device]:
         assert _cache.device is not None
         return _cache.instance, _cache.device
 
+    device = torch.device(DEVICE)
+
     if not MODEL_PATH.exists():
+        if DEMO_MODE:
+            model = DemoModel(num_classes=6)
+            model.to(device)
+            model.eval()
+            _cache.instance = model
+            _cache.device = device
+            _cache.demo = True
+            return model, device
         raise FileNotFoundError(
             f"Model checkpoint not found at {MODEL_PATH}. "
-            "Place your trained best_model.pth in the models/ directory."
+            "Place your trained best_model.pth in the models/ directory "
+            "or set EMOTISENSE_DEMO=true for demo mode."
         )
 
-    device = torch.device(DEVICE)
     model = EmotiSenseModel(embed_dim=768, num_heads=8, num_classes=6, dropout=0.3)
-
     checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=False)
 
     if "model_state_dict" in checkpoint:
@@ -100,6 +102,7 @@ def load_model() -> tuple[nn.Module, torch.device]:
 
     _cache.instance = model
     _cache.device = device
+    _cache.demo = False
 
     return model, device
 
