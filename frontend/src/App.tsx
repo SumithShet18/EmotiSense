@@ -4,6 +4,8 @@ import HomePage from './pages/HomePage';
 import AnalyzePage from './pages/AnalyzePage';
 import HistoryPage from './pages/HistoryPage';
 import AboutPage from './pages/AboutPage';
+import ArchitecturePage from './pages/ArchitecturePage';
+import ReportPage from './pages/ReportPage';
 
 export default function App() {
   return (
@@ -14,6 +16,8 @@ export default function App() {
           <Route path="/analyze" element={<AnalyzePage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/about" element={<AboutPage />} />
+          <Route path="/architecture" element={<ArchitecturePage />} />
+          <Route path="/report" element={<ReportPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

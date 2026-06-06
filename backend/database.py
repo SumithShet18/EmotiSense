@@ -1,20 +1,40 @@
-import sqlite3
 import json
+import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
-from config import DATABASE_PATH
+from config import USE_SUPABASE
+
+if USE_SUPABASE:
+    from supabase_client import (
+        init_supabase,
+        insert_prediction as supabase_insert,
+        get_all_predictions as supabase_get_all,
+        get_prediction_by_id as supabase_get_by_id,
+        get_total_count as supabase_get_count,
+        search_predictions as supabase_search,
+        upload_audio as supabase_upload_audio,
+    )
+
+# ---------------------------------------------------------------------------
+# SQLite fallback (used when USE_SUPABASE = false)
+# ---------------------------------------------------------------------------
+
+import os
+from pathlib import Path
+DATABASE_PATH = Path(__file__).resolve().parent.parent / "database" / "emotisense.db"
 
 
-def get_connection() -> sqlite3.Connection:
+def _get_connection() -> sqlite3.Connection:
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DATABASE_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
 
-def init_db() -> None:
-    conn = get_connection()
+def _sqlite_init_db() -> None:
+    conn = _get_connection()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS emotion_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,44 +50,28 @@ def init_db() -> None:
     conn.close()
 
 
-def insert_prediction(
+def _sqlite_insert_prediction(
     text_input: Optional[str],
     audio_path: Optional[str],
     emotion: str,
     confidence: float,
     probabilities: dict,
 ) -> int:
-    conn = get_connection()
+    conn = _get_connection()
     cursor = conn.execute(
-        """
-        INSERT INTO emotion_logs (timestamp, text_input, audio_path, emotion, confidence, probabilities)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            datetime.now(timezone.utc).isoformat(),
-            text_input,
-            audio_path,
-            emotion,
-            confidence,
-            json.dumps(probabilities),
-        ),
+        """INSERT INTO emotion_logs (timestamp, text_input, audio_path, emotion, confidence, probabilities)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (datetime.now(timezone.utc).isoformat(), text_input, audio_path, emotion, confidence, json.dumps(probabilities)),
     )
     conn.commit()
     conn.close()
-    cur = cursor.lastrowid
-    return 0 if cur is None else cur
+    return cursor.lastrowid or 0
 
 
-def get_all_predictions(limit: int = 100, offset: int = 0) -> list[dict]:
-    conn = get_connection()
+def _sqlite_get_all_predictions(limit: int = 100, offset: int = 0) -> list[dict]:
+    conn = _get_connection()
     rows = conn.execute(
-        """
-        SELECT id, timestamp, text_input, audio_path, emotion, confidence, probabilities
-        FROM emotion_logs
-        ORDER BY id DESC
-        LIMIT ? OFFSET ?
-        """,
-        (limit, offset),
+        "SELECT * FROM emotion_logs ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
     ).fetchall()
     conn.close()
     results = []
@@ -79,12 +83,9 @@ def get_all_predictions(limit: int = 100, offset: int = 0) -> list[dict]:
     return results
 
 
-def get_prediction_by_id(prediction_id: int) -> Optional[dict]:
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT id, timestamp, text_input, audio_path, emotion, confidence, probabilities FROM emotion_logs WHERE id = ?",
-        (prediction_id,),
-    ).fetchone()
+def _sqlite_get_prediction_by_id(prediction_id: int) -> Optional[dict]:
+    conn = _get_connection()
+    row = conn.execute("SELECT * FROM emotion_logs WHERE id = ?", (prediction_id,)).fetchone()
     conn.close()
     if row is None:
         return None
@@ -94,8 +95,102 @@ def get_prediction_by_id(prediction_id: int) -> Optional[dict]:
     return d
 
 
-def get_total_count() -> int:
-    conn = get_connection()
+def _sqlite_get_total_count() -> int:
+    conn = _get_connection()
     row = conn.execute("SELECT COUNT(*) as count FROM emotion_logs").fetchone()
     conn.close()
     return row["count"]
+
+
+def _sqlite_search_predictions(query: str = "", emotion_filter: str = "", limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+    conn = _get_connection()
+    conditions = []
+    params: list = []
+    if emotion_filter:
+        conditions.append("emotion = ?")
+        params.append(emotion_filter)
+    if query:
+        conditions.append("text_input LIKE ?")
+        params.append(f"%{query}%")
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    count_row = conn.execute(f"SELECT COUNT(*) as count FROM emotion_logs {where}", params).fetchone()
+    total = count_row["count"]
+    rows = conn.execute(
+        f"SELECT * FROM emotion_logs {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+        params + [limit, offset],
+    ).fetchall()
+    conn.close()
+    results = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("probabilities"), str):
+            d["probabilities"] = json.loads(d["probabilities"])
+        results.append(d)
+    return results, total
+
+
+# ---------------------------------------------------------------------------
+# Public API — routes to Supabase or SQLite
+# ---------------------------------------------------------------------------
+
+def init_db() -> None:
+    if USE_SUPABASE:
+        init_supabase()
+    else:
+        _sqlite_init_db()
+
+
+def insert_prediction(
+    text_input: Optional[str] = None,
+    audio_path: Optional[str] = None,
+    emotion: str = "",
+    confidence: float = 0.0,
+    probabilities: Optional[dict] = None,
+    audio_url: Optional[str] = None,
+) -> str | int:
+    if probabilities is None:
+        probabilities = {}
+    if USE_SUPABASE:
+        return supabase_insert(
+            transcript=text_input,
+            audio_url=audio_url,
+            emotion=emotion,
+            confidence=confidence,
+            probabilities=probabilities,
+        )
+    return _sqlite_insert_prediction(text_input, audio_path, emotion, confidence, probabilities)
+
+
+def get_all_predictions(limit: int = 100, offset: int = 0) -> list[dict]:
+    if USE_SUPABASE:
+        return supabase_get_all(limit=limit, offset=offset)
+    return _sqlite_get_all_predictions(limit=limit, offset=offset)
+
+
+def get_prediction_by_id(prediction_id: str | int) -> Optional[dict]:
+    if USE_SUPABASE:
+        return supabase_get_by_id(str(prediction_id))
+    return _sqlite_get_prediction_by_id(int(prediction_id))
+
+
+def get_total_count() -> int:
+    if USE_SUPABASE:
+        return supabase_get_count()
+    return _sqlite_get_total_count()
+
+
+def search_predictions(query: str = "", emotion_filter: str = "", limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+    if USE_SUPABASE:
+        return supabase_search(query=query, emotion_filter=emotion_filter, limit=limit, offset=offset)
+    return _sqlite_search_predictions(query=query, emotion_filter=emotion_filter, limit=limit, offset=offset)
+
+
+def upload_audio(bucket: str, file_name: str, file_data: bytes) -> str:
+    if USE_SUPABASE:
+        return supabase_upload_audio(bucket, file_name, file_data)
+    save_dir = Path(__file__).resolve().parent.parent / "database" / "uploads"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    path = save_dir / file_name
+    with open(path, "wb") as f:
+        f.write(file_data)
+    return str(path)

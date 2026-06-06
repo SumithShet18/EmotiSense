@@ -1,5 +1,5 @@
 export interface PredictResponse {
-  id: number;
+  id: string | number;
   transcript: string | null;
   emotion: string;
   confidence: number;
@@ -7,10 +7,11 @@ export interface PredictResponse {
 }
 
 export interface HistoryItem {
-  id: number;
+  id: string | number;
   timestamp: string;
   text_input: string | null;
   audio_path: string | null;
+  audio_url: string | null;
   emotion: string;
   confidence: number;
   probabilities: Record<string, number> | null;

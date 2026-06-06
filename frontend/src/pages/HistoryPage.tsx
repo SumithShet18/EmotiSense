@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { getHistory } from '../api/client';
 import { HistoryItem } from '../types';
@@ -13,6 +13,7 @@ const emotionColors: Record<string, string> = {
   neutral: '#6b7280', excited: '#a855f7', frustrated: '#f97316',
 };
 
+const EMOTIONS = ['angry', 'happy', 'sad', 'neutral', 'excited', 'frustrated'];
 const ITEMS_PER_PAGE = 10;
 
 export default function HistoryPage() {
@@ -23,11 +24,14 @@ export default function HistoryPage() {
   const [search, setSearch] = useState('');
   const [emotionFilter, setEmotionFilter] = useState('');
   const [page, setPage] = useState(1);
+  const [playingId, setPlayingId] = useState<string | number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const fetchPage = useCallback(async (pageNum: number) => {
+  const fetchPage = useCallback(async (pageNum: number, q: string, em: string) => {
     setLoading(true);
+    setError(null);
     try {
-      const data = await getHistory(ITEMS_PER_PAGE, (pageNum - 1) * ITEMS_PER_PAGE);
+      const data = await getHistory(ITEMS_PER_PAGE, (pageNum - 1) * ITEMS_PER_PAGE, q, em);
       setItems(data.items);
       setTotal(data.total);
     } catch (err) {
@@ -38,43 +42,30 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
-    fetchPage(1);
-  }, [fetchPage]);
-
-  useEffect(() => {
-    fetchPage(page);
-  }, [page, fetchPage]);
-
-  const filtered = useMemo(() => {
-    return items.filter((item) => {
-      const matchesSearch = search
-        ? (item.text_input || '').toLowerCase().includes(search.toLowerCase())
-        : true;
-      const matchesEmotion = emotionFilter
-        ? item.emotion.toLowerCase() === emotionFilter.toLowerCase()
-        : true;
-      return matchesSearch && matchesEmotion;
-    });
-  }, [items, search, emotionFilter]);
+    fetchPage(page, search, emotionFilter);
+  }, [page, search, emotionFilter, fetchPage]);
 
   const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
-  const emotions = [...new Set(items.map((i) => i.emotion))];
 
-  if (loading && items.length === 0) {
-    return (
-      <div className="flex items-center justify-center py-32">
-        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="bg-destructive/10 border border-destructive/20 text-destructive px-5 py-3.5 rounded-xl text-sm">
-        {error}
-      </div>
-    );
-  }
+  const handlePlay = (item: HistoryItem) => {
+    if (playingId === item.id) {
+      audioRef.current?.pause();
+      setPlayingId(null);
+      return;
+    }
+    if (item.audio_url) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      const audio = new Audio(item.audio_url);
+      audio.onended = () => setPlayingId(null);
+      audio.onerror = () => setPlayingId(null);
+      audio.play().catch(() => setPlayingId(null));
+      audioRef.current = audio;
+      setPlayingId(item.id);
+    }
+  };
 
   return (
     <div>
@@ -108,21 +99,38 @@ export default function HistoryPage() {
           className="input-field w-full sm:w-40"
         >
           <option value="">All emotions</option>
-          {emotions.map((e) => (
-            <option key={e} value={e} className="bg-background">{e}</option>
+          {EMOTIONS.map((e) => (
+            <option key={e} value={e} className="bg-background capitalize">{e}</option>
           ))}
         </select>
         <div className="text-sm text-muted-foreground whitespace-nowrap">
-          {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+          {total} result{total !== 1 ? 's' : ''}
         </div>
       </div>
 
-      {/* Table */}
-      {filtered.length === 0 ? (
+      {/* Loading */}
+      {loading && items.length === 0 && (
+        <div className="flex items-center justify-center py-32">
+          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+
+      {/* Error */}
+      {error && !loading && (
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive px-5 py-3.5 rounded-xl text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Empty */}
+      {!loading && !error && items.length === 0 && (
         <div className="card p-12 text-center">
           <p className="text-muted-foreground">No predictions found.</p>
         </div>
-      ) : (
+      )}
+
+      {/* Table */}
+      {!loading && !error && items.length > 0 && (
         <>
           <div className="card overflow-hidden">
             <div className="overflow-x-auto">
@@ -137,7 +145,7 @@ export default function HistoryPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((item, i) => (
+                  {items.map((item, i) => (
                     <motion.tr
                       key={item.id}
                       initial={{ opacity: 0, y: 4 }}
@@ -173,8 +181,18 @@ export default function HistoryPage() {
                       <td className="px-6 py-4 text-muted-foreground max-w-[220px] truncate hidden md:table-cell">
                         {item.text_input || '\u2014'}
                       </td>
-                      <td className="px-6 py-4 text-center text-sm text-muted-foreground">
-                        {item.audio_path ? '🎤' : '\u2014'}
+                      <td className="px-6 py-4 text-center">
+                        {item.audio_url ? (
+                          <button
+                            onClick={() => handlePlay(item)}
+                            className="text-lg hover:scale-110 transition-transform"
+                            title={playingId === item.id ? 'Stop' : 'Play audio'}
+                          >
+                            {playingId === item.id ? '⏹' : '🎤'}
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground/40">\u2014</span>
+                        )}
                       </td>
                     </motion.tr>
                   ))}

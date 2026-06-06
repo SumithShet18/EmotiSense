@@ -3,7 +3,7 @@ from typing import Optional
 
 
 class PredictResponse(BaseModel):
-    id: int
+    id: str | int
     transcript: Optional[str] = None
     emotion: str
     confidence: float
@@ -15,10 +15,11 @@ class HealthResponse(BaseModel):
 
 
 class HistoryItem(BaseModel):
-    id: int
+    id: str | int
     timestamp: str
     text_input: Optional[str] = None
     audio_path: Optional[str] = None
+    audio_url: Optional[str] = None
     emotion: str
     confidence: float
     probabilities: Optional[dict] = None

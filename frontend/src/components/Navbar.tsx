@@ -10,6 +10,8 @@ export default function Navbar() {
     { to: '/', label: 'Home' },
     { to: '/analyze', label: 'Analyze' },
     { to: '/history', label: 'Dashboard' },
+    { to: '/architecture', label: 'Architecture' },
+    { to: '/report', label: 'Report' },
   ];
 
   const isActive = (path: string) =>

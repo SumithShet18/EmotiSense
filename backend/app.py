@@ -2,11 +2,11 @@ import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import UPLOAD_DIR, ALLOWED_AUDIO_EXTENSIONS, MAX_AUDIO_SIZE_MB
-from database import init_db, insert_prediction, get_all_predictions, get_prediction_by_id, get_total_count
+from config import ALLOWED_AUDIO_EXTENSIONS, MAX_AUDIO_SIZE_MB, SUPABASE_STORAGE_BUCKET
+from database import init_db, insert_prediction, get_all_predictions, get_prediction_by_id, get_total_count, search_predictions, upload_audio
 from schemas import HealthResponse, PredictResponse, HistoryItem, HistoryResponse
 from inference import predict_emotion
 
@@ -39,7 +39,7 @@ async def predict(
     audio: UploadFile = File(default=None),
 ):
     text_input = text.strip() if text else ""
-    audio_path = None
+    audio_url = None
 
     if not text_input and not audio:
         raise HTTPException(
@@ -68,33 +68,22 @@ async def predict(
 
         file_id = uuid.uuid4().hex
         safe_name = f"{file_id}{ext}"
-        save_path = UPLOAD_DIR / safe_name
-        with open(save_path, "wb") as f:
-            f.write(content)
-        audio_path = str(save_path)
+        audio_url = upload_audio(SUPABASE_STORAGE_BUCKET, safe_name, content)
 
     try:
         emotion, confidence, probabilities, transcript = predict_emotion(
             text=text_input or None,
-            audio_path=audio_path,
+            audio_path=None,
         )
     except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=str(e),
-        )
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Inference failed: {str(e)}",
-        )
-    finally:
-        if audio_path:
-            Path(audio_path).unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
 
     pred_id = insert_prediction(
         text_input=transcript or text_input or None,
-        audio_path=audio_path,
+        audio_path=None,
+        audio_url=audio_url,
         emotion=emotion,
         confidence=confidence,
         probabilities=probabilities,
@@ -110,14 +99,22 @@ async def predict(
 
 
 @app.get("/history", response_model=HistoryResponse)
-async def history(limit: int = 100, offset: int = 0):
-    items = get_all_predictions(limit=limit, offset=offset)
-    total = get_total_count()
+async def history(
+    limit: int = Query(default=100, le=500),
+    offset: int = Query(default=0, ge=0),
+    search: str = Query(default=""),
+    emotion: str = Query(default=""),
+):
+    if search or emotion:
+        items, total = search_predictions(query=search, emotion_filter=emotion, limit=limit, offset=offset)
+    else:
+        items = get_all_predictions(limit=limit, offset=offset)
+        total = get_total_count()
     return HistoryResponse(items=[HistoryItem(**i) for i in items], total=total)
 
 
 @app.get("/prediction/{prediction_id}", response_model=HistoryItem)
-async def get_prediction(prediction_id: int):
+async def get_prediction(prediction_id: str):
     item = get_prediction_by_id(prediction_id)
     if not item:
         raise HTTPException(status_code=404, detail="Prediction not found.")

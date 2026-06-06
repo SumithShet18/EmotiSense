@@ -9,3 +9,13 @@ services:
         value: "true"
       - key: EMOTISENSE_DEVICE
         value: cpu
+      - key: USE_SUPABASE
+        value: "true"
+      - key: SUPABASE_URL
+        value: https://gbyqjrgwammzolzezzcb.supabase.co
+      - key: SUPABASE_ANON_KEY
+        value: sb_publishable_xAebB1ojCoDZOgUu5o2mEg_YhrM6bNp
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: audio-files

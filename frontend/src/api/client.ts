@@ -22,7 +22,7 @@ export async function predict(
   text?: string,
   audio?: File,
 ): Promise<{
-  id: number;
+  id: string | number;
   transcript: string | null;
   emotion: string;
   confidence: number;
@@ -45,27 +45,37 @@ export async function predict(
   return res.json();
 }
 
-export async function getHistory(limit = 100, offset = 0) {
+export async function getHistory(
+  limit = 100,
+  offset = 0,
+  search = '',
+  emotion = '',
+) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (search) params.set('search', search);
+  if (emotion) params.set('emotion', emotion);
   return request<{
     items: {
-      id: number;
+      id: string | number;
       timestamp: string;
       text_input: string | null;
       audio_path: string | null;
+      audio_url: string | null;
       emotion: string;
       confidence: number;
       probabilities: Record<string, number> | null;
     }[];
     total: number;
-  }>(`/history?limit=${limit}&offset=${offset}`);
+  }>(`/history?${params}`);
 }
 
-export async function getPrediction(id: number) {
+export async function getPrediction(id: string | number) {
   return request<{
-    id: number;
+    id: string | number;
     timestamp: string;
     text_input: string | null;
     audio_path: string | null;
+    audio_url: string | null;
     emotion: string;
     confidence: number;
     probabilities: Record<string, number> | null;
