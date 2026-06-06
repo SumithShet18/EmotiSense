@@ -3,9 +3,14 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
-from config import USE_SUPABASE
+import logging
+from config import USE_SUPABASE, SUPABASE_CONFIGURED
 
-if USE_SUPABASE:
+_use_supabase = USE_SUPABASE and SUPABASE_CONFIGURED
+if USE_SUPABASE and not SUPABASE_CONFIGURED:
+    logging.warning("USE_SUPABASE=true but SUPABASE_URL or SUPABASE_SERVICE_KEY missing. Falling back to SQLite.")
+
+if _use_supabase:
     from supabase_client import (
         init_supabase,
         insert_prediction as supabase_insert,
@@ -134,7 +139,7 @@ def _sqlite_search_predictions(query: str = "", emotion_filter: str = "", limit:
 # ---------------------------------------------------------------------------
 
 def init_db() -> None:
-    if USE_SUPABASE:
+    if _use_supabase:
         init_supabase()
     else:
         _sqlite_init_db()
@@ -150,7 +155,7 @@ def insert_prediction(
 ) -> str | int:
     if probabilities is None:
         probabilities = {}
-    if USE_SUPABASE:
+    if _use_supabase:
         return supabase_insert(
             transcript=text_input,
             audio_url=audio_url,
@@ -162,31 +167,31 @@ def insert_prediction(
 
 
 def get_all_predictions(limit: int = 100, offset: int = 0) -> list[dict]:
-    if USE_SUPABASE:
+    if _use_supabase:
         return supabase_get_all(limit=limit, offset=offset)
     return _sqlite_get_all_predictions(limit=limit, offset=offset)
 
 
 def get_prediction_by_id(prediction_id: str | int) -> Optional[dict]:
-    if USE_SUPABASE:
+    if _use_supabase:
         return supabase_get_by_id(str(prediction_id))
     return _sqlite_get_prediction_by_id(int(prediction_id))
 
 
 def get_total_count() -> int:
-    if USE_SUPABASE:
+    if _use_supabase:
         return supabase_get_count()
     return _sqlite_get_total_count()
 
 
 def search_predictions(query: str = "", emotion_filter: str = "", limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
-    if USE_SUPABASE:
+    if _use_supabase:
         return supabase_search(query=query, emotion_filter=emotion_filter, limit=limit, offset=offset)
     return _sqlite_search_predictions(query=query, emotion_filter=emotion_filter, limit=limit, offset=offset)
 
 
 def upload_audio(bucket: str, file_name: str, file_data: bytes) -> str:
-    if USE_SUPABASE:
+    if _use_supabase:
         return supabase_upload_audio(bucket, file_name, file_data)
     save_dir = Path(__file__).resolve().parent.parent / "database" / "uploads"
     save_dir.mkdir(parents=True, exist_ok=True)
