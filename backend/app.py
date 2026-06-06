@@ -12,6 +12,8 @@ from config import ALLOWED_AUDIO_EXTENSIONS, MAX_AUDIO_SIZE_MB, SUPABASE_STORAGE
 from database import init_db, insert_prediction, get_all_predictions, get_prediction_by_id, get_total_count, search_predictions, upload_audio
 from schemas import HealthResponse, PredictResponse, HistoryItem, HistoryResponse
 from inference import predict_emotion
+from xai_schemas import XAIResponse
+from xai import explain_prediction
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
@@ -140,6 +142,47 @@ async def history(
         items = get_all_predictions(limit=limit, offset=offset)
         total = get_total_count()
     return HistoryResponse(items=[HistoryItem(**i) for i in items], total=total)
+
+
+@app.post("/explain", response_model=XAIResponse)
+async def explain(
+    text: str = Form(default="", max_length=5000),
+    audio: UploadFile = File(default=None),
+):
+    text_input = text.strip() if text else ""
+    audio_path = None
+
+    if not text_input and not audio:
+        raise HTTPException(status_code=400, detail="Provide audio or text for analysis.")
+
+    if audio:
+        ext = Path(audio.filename).suffix.lower() if audio.filename else ".wav"
+        if ext not in ALLOWED_AUDIO_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported format '{ext}'.")
+        content = await audio.read()
+        if len(content) > MAX_AUDIO_SIZE_MB * 1024 * 1024:
+            raise HTTPException(status_code=400, detail=f"File exceeds {MAX_AUDIO_SIZE_MB} MB.")
+        file_id = uuid.uuid4().hex
+        safe_name = f"{file_id}{ext}"
+        audio_url = upload_audio(SUPABASE_STORAGE_BUCKET, safe_name, content)
+        audio_path = str(Path(audio_url)) if "http" in audio_url else None
+
+    try:
+        result = explain_prediction(text=text_input or None, audio_path=audio_path)
+    except Exception as e:
+        logger.error(f"XAI failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Explainability analysis failed.")
+
+    pred_id = insert_prediction(
+        text_input=result["prediction"]["transcript"] or text_input or None,
+        audio_path=None,
+        audio_url=audio_url if audio else None,
+        emotion=result["prediction"]["emotion"],
+        confidence=result["prediction"]["confidence"],
+        probabilities={p["emotion"]: p["probability"] for p in result["prediction"]["probabilities"]},
+    )
+
+    return result
 
 
 @app.get("/prediction/{prediction_id}", response_model=HistoryItem)

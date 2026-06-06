@@ -81,6 +81,24 @@ export async function getHistory(
   }>(`/history?${params}`);
 }
 
+export async function explain(text?: string, audio?: File) {
+  const form = new FormData();
+  if (text) form.append('text', text);
+  if (audio) form.append('audio', audio);
+
+  const res = await fetch(`${API_BASE}/explain`, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(body.detail || `Explain failed with status ${res.status}`);
+  }
+
+  return res.json() as Promise<import('../types').XAIResponse>;
+}
+
 export async function getPrediction(id: string | number) {
   return request<{
     id: string | number;

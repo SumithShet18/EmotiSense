@@ -6,6 +6,7 @@ import HistoryPage from './pages/HistoryPage';
 import AboutPage from './pages/AboutPage';
 import ArchitecturePage from './pages/ArchitecturePage';
 import ReportPage from './pages/ReportPage';
+import ExplainPage from './pages/ExplainPage';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/about" element={<AboutPage />} />
           <Route path="/architecture" element={<ArchitecturePage />} />
           <Route path="/report" element={<ReportPage />} />
+          <Route path="/explain" element={<ExplainPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

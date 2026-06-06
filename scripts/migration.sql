@@ -28,3 +28,22 @@ ON CONFLICT (id) DO NOTHING;
 
 CREATE POLICY "Allow anon read audio" ON storage.objects FOR SELECT USING (bucket_id = 'audio-files');
 CREATE POLICY "Allow anon upload audio" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'audio-files');
+
+-- XAI explanations table
+CREATE TABLE IF NOT EXISTS explanations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    prediction_id UUID REFERENCES emotion_logs(id) ON DELETE CASCADE,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reasoning TEXT NOT NULL,
+    token_importances JSONB NOT NULL DEFAULT '[]',
+    modality_contributions JSONB NOT NULL DEFAULT '{}',
+    audio_features JSONB,
+    attention_matrix JSONB,
+    uncertainty JSONB NOT NULL DEFAULT '{}',
+    secondary_emotions JSONB NOT NULL DEFAULT '[]',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE explanations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow anon read explanations" ON explanations FOR SELECT USING (true);
+CREATE POLICY "Allow anon insert explanations" ON explanations FOR INSERT WITH CHECK (true);
