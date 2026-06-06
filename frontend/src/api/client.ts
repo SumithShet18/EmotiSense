@@ -14,6 +14,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function requestWithRetry<T>(path: string, options?: RequestInit, retries = 2): Promise<T> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await request<T>(path, options);
+    } catch (err) {
+      if (attempt === retries) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+    }
+  }
+  throw new Error('Request failed after retries');
+}
+
 export async function healthCheck() {
   return request<{ status: string }>('/health');
 }
@@ -54,7 +66,7 @@ export async function getHistory(
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (search) params.set('search', search);
   if (emotion) params.set('emotion', emotion);
-  return request<{
+  return requestWithRetry<{
     items: {
       id: string | number;
       timestamp: string;
