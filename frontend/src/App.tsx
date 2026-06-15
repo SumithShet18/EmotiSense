@@ -8,6 +8,8 @@ import ArchitecturePage from './pages/ArchitecturePage';
 import ReportPage from './pages/ReportPage';
 import ExplainPage from './pages/ExplainPage';
 
+import PerformancePage from './pages/PerformancePage';
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -20,6 +22,7 @@ export default function App() {
           <Route path="/architecture" element={<ArchitecturePage />} />
           <Route path="/report" element={<ReportPage />} />
           <Route path="/explain" element={<ExplainPage />} />
+          <Route path="/performance" element={<PerformancePage />} />
         </Route>
       </Routes>
     </BrowserRouter>

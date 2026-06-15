@@ -9,8 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import ALLOWED_AUDIO_EXTENSIONS, MAX_AUDIO_SIZE_MB, SUPABASE_STORAGE_BUCKET
-from database import init_db, insert_prediction, insert_explanation, get_all_predictions, get_prediction_by_id, get_total_count, search_predictions, upload_audio
-from schemas import HealthResponse, PredictResponse, HistoryItem, HistoryResponse
+from database import (
+    init_db, insert_prediction, insert_explanation,
+    get_all_predictions, get_prediction_by_id, get_total_count,
+    search_predictions, upload_audio,
+    insert_performance_log, get_performance_logs,
+)
+from schemas import (
+    HealthResponse, PredictResponse, HistoryItem, HistoryResponse,
+    PerformanceSummary, StageMetrics, PerformanceLog, PerformanceLogsResponse,
+)
 from inference import predict_emotion
 from xai_schemas import XAIResponse
 from xai import explain_prediction
@@ -100,7 +108,7 @@ async def predict(
             raise HTTPException(status_code=502, detail="Failed to store audio file. Please try again.")
 
     try:
-        emotion, confidence, probabilities, transcript = predict_emotion(
+        emotion, confidence, probabilities, transcript, stage_metrics, totals = predict_emotion(
             text=text_input or None,
             audio_path=None,
         )
@@ -120,13 +128,34 @@ async def predict(
         probabilities=probabilities,
     )
 
+    # Store performance logs
+    for st in stage_metrics:
+        insert_performance_log(
+            prediction_id=int(pred_id) if isinstance(pred_id, (int, str)) else 0,
+            component=st["component"],
+            latency_ms=st["latency_ms"],
+            memory_mb=st["memory_mb"],
+            cpu_usage=st["cpu_usage"],
+            energy_joules=st["energy_joules"],
+        )
+
     return PredictResponse(
         id=pred_id,
         transcript=transcript,
         emotion=emotion,
         confidence=confidence,
         probabilities=probabilities,
+        performance=PerformanceSummary(
+            stages=[StageMetrics(**st) for st in stage_metrics],
+            **totals,
+        ),
     )
+
+
+@app.get("/performance", response_model=PerformanceLogsResponse)
+async def get_performance(prediction_id: int = Query(default=None)):
+    logs = get_performance_logs(prediction_id=prediction_id)
+    return PerformanceLogsResponse(items=[PerformanceLog(**log) for log in logs])
 
 
 @app.get("/history", response_model=HistoryResponse)

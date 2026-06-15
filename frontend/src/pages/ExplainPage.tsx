@@ -230,11 +230,11 @@ export default function ExplainPage() {
                       className="transition-all duration-1000"
                     />
                     <circle
-                      cx="18" cy="18" r="12.5" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/[0.06]"
+                      cx="18" cy="18" r="12.5" fill="none" stroke="currentColor" strokeWidth="2"
+                      className="text-white/[0.06] transition-all duration-1000"
                       strokeDasharray={`${result.explanation.modality_contributions.audio * 100} ${100 - result.explanation.modality_contributions.audio * 100}`}
                       strokeLinecap="round"
                       style={{ strokeDashoffset: -result.explanation.modality_contributions.text * 100 }}
-                      className="transition-all duration-1000"
                     />
                   </svg>
                   <div className="absolute inset-0 flex items-center justify-center">

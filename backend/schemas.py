@@ -8,6 +8,7 @@ class PredictResponse(BaseModel):
     emotion: str
     confidence: float
     probabilities: dict[str, float]
+    performance: Optional[PerformanceSummary] = None
 
 
 class HealthResponse(BaseModel):
@@ -28,3 +29,35 @@ class HistoryItem(BaseModel):
 class HistoryResponse(BaseModel):
     items: list[HistoryItem]
     total: int
+
+
+class StageMetrics(BaseModel):
+    component: str
+    latency_ms: float
+    cpu_usage: float
+    memory_mb: float
+    energy_joules: float
+
+
+class PerformanceSummary(BaseModel):
+    stages: list[StageMetrics]
+    total_latency_ms: float
+    total_energy_joules: float
+    peak_memory_mb: float
+    avg_cpu_usage: float
+    throughput_inferences_per_sec: float
+
+
+class PerformanceLog(BaseModel):
+    id: int
+    timestamp: str
+    prediction_id: int | str
+    component: str
+    latency_ms: float
+    memory_mb: float
+    cpu_usage: float
+    energy_joules: float
+
+
+class PerformanceLogsResponse(BaseModel):
+    items: list[PerformanceLog]

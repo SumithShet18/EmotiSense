@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { predict } from '../api/client';
 import ResultCard from '../components/ResultCard';
+import type { PerformanceSummary } from '../types';
 
 const processingSteps = [
   { key: 'upload', label: 'Uploading Audio' },
@@ -13,11 +14,12 @@ const processingSteps = [
 ];
 
 type Result = {
-  id: number;
+  id: string | number;
   transcript: string | null;
   emotion: string;
   confidence: number;
   probabilities: Record<string, number>;
+  performance?: PerformanceSummary | null;
 } | null;
 
 export default function AnalyzePage() {
@@ -30,6 +32,7 @@ export default function AnalyzePage() {
 
   const [recording, setRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const scriptNodeRef = useRef<ScriptProcessorNode | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -160,6 +163,7 @@ export default function AnalyzePage() {
   async function handleAnalyze() {
     setError(null);
     setResult(null);
+    setPerformance(null);
     if (!audioFile) { setError('Record or upload audio to analyze.'); return; }
 
     setLoading(true);
@@ -175,6 +179,7 @@ export default function AnalyzePage() {
       setCurrentStep(processingSteps.length - 1);
       setTimeout(() => {
         setResult(res);
+        setPerformance(res.performance || null);
         setLoading(false);
         setCurrentStep(-1);
       }, 400);
@@ -335,6 +340,7 @@ export default function AnalyzePage() {
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
+              className="space-y-6"
             >
               <ResultCard
                 emotion={result.emotion}
@@ -344,6 +350,49 @@ export default function AnalyzePage() {
                 timestamp={new Date().toISOString()}
                 audioUrl={audioUrl}
               />
+
+              {/* Performance metrics */}
+              {performance && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, delay: 0.2 }}
+                  className="bg-[#12122a] border border-[#1e1e32] rounded-lg p-4"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Inference Metrics</p>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${
+                      performance.total_latency_ms < 500 ? 'text-emerald-400 bg-emerald-500/10' :
+                      performance.total_latency_ms < 3000 ? 'text-yellow-400 bg-yellow-500/10' :
+                      performance.total_latency_ms < 10000 ? 'text-orange-400 bg-orange-500/10' :
+                      'text-red-400 bg-red-500/10'
+                    }`}>
+                      {performance.total_latency_ms < 500 ? 'Production Ready' :
+                       performance.total_latency_ms < 3000 ? 'Near Real-Time' :
+                       performance.total_latency_ms < 10000 ? 'Batch Optimized' :
+                       'Experimental'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div>
+                      <div className="text-lg font-semibold text-gray-100">{performance.total_latency_ms.toFixed(0)}</div>
+                      <div className="text-xs text-gray-500">ms Latency</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-semibold text-gray-100">{performance.total_energy_joules.toFixed(3)}</div>
+                      <div className="text-xs text-gray-500">J Energy</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-semibold text-gray-100">{performance.peak_memory_mb.toFixed(0)}</div>
+                      <div className="text-xs text-gray-500">MB Memory</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-semibold text-gray-100">{performance.avg_cpu_usage.toFixed(1)}%</div>
+                      <div className="text-xs text-gray-500">CPU Usage</div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

@@ -51,6 +51,18 @@ def _sqlite_init_db() -> None:
             probabilities TEXT
         );
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS performance_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            prediction_id INTEGER NOT NULL,
+            component TEXT NOT NULL,
+            latency_ms REAL NOT NULL,
+            memory_mb REAL NOT NULL,
+            cpu_usage REAL NOT NULL,
+            energy_joules REAL NOT NULL
+        );
+    """)
     conn.commit()
     conn.close()
 
@@ -132,6 +144,41 @@ def _sqlite_search_predictions(query: str = "", emotion_filter: str = "", limit:
             d["probabilities"] = json.loads(d["probabilities"])
         results.append(d)
     return results, total
+
+
+# ---------------------------------------------------------------------------
+# Performance log helpers (SQLite only for now)
+# ---------------------------------------------------------------------------
+
+def _sqlite_insert_performance_log(
+    prediction_id: int,
+    component: str,
+    latency_ms: float,
+    memory_mb: float,
+    cpu_usage: float,
+    energy_joules: float,
+) -> int:
+    conn = _get_connection()
+    cursor = conn.execute(
+        """INSERT INTO performance_logs (timestamp, prediction_id, component, latency_ms, memory_mb, cpu_usage, energy_joules)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (datetime.now(timezone.utc).isoformat(), prediction_id, component, latency_ms, memory_mb, cpu_usage, energy_joules),
+    )
+    conn.commit()
+    conn.close()
+    return cursor.lastrowid or 0
+
+
+def _sqlite_get_performance_logs(prediction_id: Optional[int] = None) -> list[dict]:
+    conn = _get_connection()
+    if prediction_id is not None:
+        rows = conn.execute(
+            "SELECT * FROM performance_logs WHERE prediction_id = ? ORDER BY id", (prediction_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM performance_logs ORDER BY id DESC LIMIT 200").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -224,3 +271,22 @@ def upload_audio(bucket: str, file_name: str, file_data: bytes) -> str:
     with open(path, "wb") as f:
         f.write(file_data)
     return str(path)
+
+
+# ---------------------------------------------------------------------------
+# Performance Logs
+# ---------------------------------------------------------------------------
+
+def insert_performance_log(
+    prediction_id: int,
+    component: str,
+    latency_ms: float,
+    memory_mb: float,
+    cpu_usage: float,
+    energy_joules: float,
+) -> int:
+    return _sqlite_insert_performance_log(prediction_id, component, latency_ms, memory_mb, cpu_usage, energy_joules)
+
+
+def get_performance_logs(prediction_id: Optional[int] = None) -> list[dict]:
+    return _sqlite_get_performance_logs(prediction_id=prediction_id)

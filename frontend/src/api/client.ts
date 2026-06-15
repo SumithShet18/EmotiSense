@@ -33,13 +33,7 @@ export async function healthCheck() {
 export async function predict(
   text?: string,
   audio?: File,
-): Promise<{
-  id: string | number;
-  transcript: string | null;
-  emotion: string;
-  confidence: number;
-  probabilities: Record<string, number>;
-}> {
+): Promise<import('../types').PredictResponse> {
   const form = new FormData();
   if (text) form.append('text', text);
   if (audio) form.append('audio', audio);
@@ -110,4 +104,11 @@ export async function getPrediction(id: string | number) {
     confidence: number;
     probabilities: Record<string, number> | null;
   }>(`/prediction/${id}`);
+}
+
+export async function getPerformance(predictionId?: number) {
+  const params = predictionId ? `?prediction_id=${predictionId}` : '';
+  return request<{
+    items: import('../types').PerformanceLog[];
+  }>(`/performance${params}`);
 }

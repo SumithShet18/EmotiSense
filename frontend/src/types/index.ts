@@ -4,6 +4,35 @@ export interface PredictResponse {
   emotion: string;
   confidence: number;
   probabilities: Record<string, number>;
+  performance?: PerformanceSummary | null;
+}
+
+export interface StageMetrics {
+  component: string;
+  latency_ms: number;
+  cpu_usage: number;
+  memory_mb: number;
+  energy_joules: number;
+}
+
+export interface PerformanceSummary {
+  stages: StageMetrics[];
+  total_latency_ms: number;
+  total_energy_joules: number;
+  peak_memory_mb: number;
+  avg_cpu_usage: number;
+  throughput_inferences_per_sec: number;
+}
+
+export interface PerformanceLog {
+  id: number;
+  timestamp: string;
+  prediction_id: number | string;
+  component: string;
+  latency_ms: number;
+  memory_mb: number;
+  cpu_usage: number;
+  energy_joules: number;
 }
 
 export interface HistoryItem {

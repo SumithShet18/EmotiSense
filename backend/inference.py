@@ -4,12 +4,20 @@ import numpy as np
 
 from config import EMOTION_LABELS
 from model_loader import get_model, _cache
+from performance_profiler import ProfileStage, measure_memory, measure_cpu
 
 
 def predict_emotion(
     text: Optional[str] = None,
     audio_path: Optional[str] = None,
-) -> tuple[str, float, dict[str, float], Optional[str]]:
+) -> tuple[str, float, dict[str, float], Optional[str], list[dict], dict]:
+    """
+    Predict emotion from text and/or audio.
+
+    Returns:
+        (emotion_label, confidence, probabilities_dict, transcript, stage_metrics, totals)
+    """
+    stages: list[dict] = []
     model, device = get_model()
 
     transcript: Optional[str] = None
@@ -22,7 +30,40 @@ def predict_emotion(
         emotion_label = EMOTION_LABELS[pred_idx]
         prob_dict = {EMOTION_LABELS[i]: float(probs[i]) for i in range(len(EMOTION_LABELS))}
         transcript = text or "(demo transcription)"
-        return emotion_label, confidence, prob_dict, transcript
+
+        # Build demo performance metrics
+        with ProfileStage("Whisper Transcription") as s:
+            import time as _t
+            _t.sleep(0.05)
+        stages.append(s.to_dict())
+        with ProfileStage("MentalBERT Inference") as s:
+            _t.sleep(0.03)
+        stages.append(s.to_dict())
+        with ProfileStage("HuBERT Inference") as s:
+            _t.sleep(0.04)
+        stages.append(s.to_dict())
+        with ProfileStage("Cross-Modal Attention Fusion") as s:
+            _t.sleep(0.01)
+        stages.append(s.to_dict())
+        with ProfileStage("Emotion Classification") as s:
+            _t.sleep(0.002)
+        stages.append(s.to_dict())
+
+        total_latency = sum(s["latency_ms"] for s in stages)
+        total_energy = sum(s["energy_joules"] for s in stages)
+        peak_memory = max(s["memory_mb"] for s in stages)
+        avg_cpu = round(sum(s["cpu_usage"] for s in stages) / len(stages), 2)
+        throughput = round(1000 / total_latency, 2) if total_latency > 0 else 0.0
+
+        totals = {
+            "total_latency_ms": round(total_latency, 2),
+            "total_energy_joules": round(total_energy, 4),
+            "peak_memory_mb": round(peak_memory, 2),
+            "avg_cpu_usage": avg_cpu,
+            "throughput_inferences_per_sec": throughput,
+        }
+
+        return emotion_label, confidence, prob_dict, transcript, stages, totals
 
     import torch
     from transformers import AutoTokenizer, AutoModel
@@ -84,33 +125,61 @@ def predict_emotion(
 
     resolved_text = text
 
+    # Stage 1: Whisper Transcription
     if audio_path and not resolved_text:
-        transcript = transcribe_audio(audio_path)
-        resolved_text = transcript
+        with ProfileStage("Whisper Transcription") as s:
+            transcript = transcribe_audio(audio_path)
+            resolved_text = transcript
+        stages.append(s.to_dict())
     elif audio_path and resolved_text:
         transcript = resolved_text
 
     text_tensor: Optional[torch.Tensor] = None
     audio_tensor: Optional[torch.Tensor] = None
 
+    # Stage 2: MentalBERT Inference
     if resolved_text:
-        text_tensor = preprocess_text(resolved_text)
+        with ProfileStage("MentalBERT Inference") as s:
+            text_tensor = preprocess_text(resolved_text)
+        stages.append(s.to_dict())
 
+    # Stage 3: HuBERT Inference
     if audio_path:
-        audio_tensor = preprocess_audio(audio_path)
+        with ProfileStage("HuBERT Inference") as s:
+            audio_tensor = preprocess_audio(audio_path)
+        stages.append(s.to_dict())
 
     if text_tensor is None and audio_tensor is None:
         raise ValueError("At least one of text or audio must be provided.")
 
-    logits = model(text_features=text_tensor, audio_features=audio_tensor)
+    # Stage 4: Cross-Modal Attention Fusion
+    with ProfileStage("Cross-Modal Attention Fusion") as s:
+        logits = model(text_features=text_tensor, audio_features=audio_tensor)
+    stages.append(s.to_dict())
 
-    probabilities = torch.softmax(logits, dim=-1)
-    probs_np = probabilities.cpu().numpy().flatten()
+    # Stage 5: Emotion Classification
+    with ProfileStage("Emotion Classification") as s:
+        probabilities = torch.softmax(logits, dim=-1)
+        probs_np = probabilities.detach().cpu().numpy().flatten()
+        pred_idx = int(np.argmax(probs_np))
+        confidence = float(probs_np[pred_idx])
+        emotion_label = EMOTION_LABELS[pred_idx]
+        prob_dict = {EMOTION_LABELS[i]: float(probs_np[i]) for i in range(len(EMOTION_LABELS))}
+    stages.append(s.to_dict())
 
-    pred_idx = int(np.argmax(probs_np))
-    confidence = float(probs_np[pred_idx])
+    # Aggregate totals
+    total_latency = sum(st["latency_ms"] for st in stages)
+    total_energy = sum(st["energy_joules"] for st in stages)
+    peak_memory = max(st["memory_mb"] for st in stages)
+    avg_cpu = round(sum(st["cpu_usage"] for st in stages) / len(stages), 2)
+    throughput = round(1000 / total_latency, 2) if total_latency > 0 else 0.0
 
-    emotion_label = EMOTION_LABELS[pred_idx]
-    prob_dict = {EMOTION_LABELS[i]: float(probs_np[i]) for i in range(len(EMOTION_LABELS))}
+    totals = {
+        "total_latency_ms": round(total_latency, 2),
+        "total_energy_joules": round(total_energy, 4),
+        "peak_memory_mb": round(peak_memory, 2),
+        "avg_cpu_usage": avg_cpu,
+        "throughput_inferences_per_sec": throughput,
+    }
 
-    return emotion_label, confidence, prob_dict, transcript
+    return emotion_label, confidence, prob_dict, transcript, stages, totals
