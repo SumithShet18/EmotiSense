@@ -1,10 +1,118 @@
 from typing import Optional
+import re
 
 import numpy as np
 
 from config import EMOTION_LABELS
 from model_loader import get_model, _cache
 from performance_profiler import ProfileStage, measure_memory, measure_cpu
+
+TEXT_MODEL_NAME = "bert-base-uncased"
+AUDIO_MODEL_NAME = "facebook/hubert-base-ls960"
+_text_tokenizer = None
+_text_encoder = None
+_audio_processor = None
+_audio_encoder = None
+
+
+EMOTION_KEYWORDS: dict[str, list[str]] = {
+    "angry": [
+        "angry", "furious", "outraged", "livid", "irate", "enraged", "infuriated",
+        "mad", "pissed", "seething", "wrathful", "fuming", "incensed", "boiling",
+        "irritated", "annoyed", "aggravated", "exasperated", "frustrated",
+        "hate", "hatred", "rage", "anger", "hostile", "aggressive", "violent",
+    ],
+    "happy": [
+        "happy", "glad", "joyful", "delighted", "thrilled", "elated", "ecstatic",
+        "overjoyed", "cheerful", "merry", "jubilant", "euphoric", "blissful",
+        "content", "pleased", "satisfied", "wonderful", "great", "fantastic",
+        "amazing", "love", "warm", "smile", "laughing", "celebrating",
+    ],
+    "sad": [
+        "sad", "unhappy", "depressed", "miserable", "heartbroken", "devastated",
+        "grief", "grieving", "sorrowful", "mournful", "melancholy", "gloomy",
+        "somber", "dreary", "dismal", "hopeless", "despair", "despondent",
+        "tearful", "crying", "weeping", "lonely", "hurt", "pain", "suffering",
+        "disappointed", "disheartened", "dejected", "downcast",
+    ],
+    "neutral": [
+        "neutral", "ordinary", "typical", "standard", "normal", "commonplace",
+        "adequate", "mediocre", "average", "unremarkable", "uninteresting",
+        "indifferent", "unemotional", "detached", "dispassionate", "factual",
+        "informative", "objective", "balanced", "matter-of-fact",
+    ],
+    "excited": [
+        "excited", "thrilled", "eager", "enthusiastic", "passionate", "energetic",
+        "animated", "vibrant", "dynamic", "lively", "spirited", "exhilarated",
+        "pumped", "hyped", "amped", "anticipation", "looking forward",
+        "can't wait", "amazing", "incredible", "awesome", "spectacular",
+        "breathtaking", "extraordinary",
+    ],
+    "frustrated": [
+        "frustrated", "annoyed", "irritated", "exasperated", "aggravated",
+        "vexed", "testy", "cranky", "grumpy", "fed up", "sick of", "tired of",
+        "stuck", "blocked", "hindered", "thwarted", "stalled", "impatient",
+        "agitated", "restless", "helpless", "useless", "pointless", "waste",
+        "confused", "overwhelmed", "stressed", "struggling",
+    ],
+}
+
+_emotion_patterns: dict[str, re.Pattern] | None = None
+
+
+def _compile_keywords():
+    global _emotion_patterns
+    _emotion_patterns = {
+        emotion: re.compile(
+            r'\b(?:' + '|'.join(re.escape(kw) for kw in kws) + r')\b',
+            re.IGNORECASE
+        )
+        for emotion, kws in EMOTION_KEYWORDS.items()
+    }
+
+
+def classify_text_emotion(text: str) -> tuple[str, float, dict[str, float]]:
+    if _emotion_patterns is None:
+        _compile_keywords()
+
+    text_lower = text.lower()
+    scores = {}
+    for emotion in EMOTION_LABELS:
+        matches = _emotion_patterns[emotion].findall(text_lower)
+        scores[emotion] = len(matches)
+
+    total = sum(scores.values())
+    if total == 0:
+        prob_dict = {e: 1.0 / len(EMOTION_LABELS) for e in EMOTION_LABELS}
+        pred_idx = EMOTION_LABELS.index("neutral")
+        return EMOTION_LABELS[pred_idx], prob_dict[EMOTION_LABELS[pred_idx]], prob_dict
+
+    smoothed = {e: count + 0.5 for e, count in scores.items()}
+    smooth_total = sum(smoothed.values())
+    prob_dict = {e: v / smooth_total for e, v in smoothed.items()}
+    pred_idx = int(np.argmax([prob_dict[e] for e in EMOTION_LABELS]))
+    confidence = prob_dict[EMOTION_LABELS[pred_idx]]
+    return EMOTION_LABELS[pred_idx], confidence, prob_dict
+
+
+def _get_text_encoder():
+    global _text_tokenizer, _text_encoder
+    if _text_encoder is None:
+        from transformers import AutoTokenizer, AutoModel
+        _text_tokenizer = AutoTokenizer.from_pretrained(TEXT_MODEL_NAME)
+        _text_encoder = AutoModel.from_pretrained(TEXT_MODEL_NAME)
+        _text_encoder.eval()
+    return _text_tokenizer, _text_encoder
+
+
+def _get_audio_encoder():
+    global _audio_processor, _audio_encoder
+    if _audio_encoder is None:
+        from transformers import Wav2Vec2FeatureExtractor, HubertModel
+        _audio_processor = Wav2Vec2FeatureExtractor.from_pretrained(AUDIO_MODEL_NAME)
+        _audio_encoder = HubertModel.from_pretrained(AUDIO_MODEL_NAME)
+        _audio_encoder.eval()
+    return _audio_processor, _audio_encoder
 
 
 def predict_emotion(
@@ -66,106 +174,94 @@ def predict_emotion(
         return emotion_label, confidence, prob_dict, transcript, stages, totals
 
     import torch
-    from transformers import AutoTokenizer, AutoModel
-    from transformers import Wav2Vec2FeatureExtractor, HubertModel
     import librosa
     from config import SAMPLE_RATE
     from transcription import transcribe_audio
 
-    TEXT_MODEL_NAME = "bert-base-uncased"
-    _text_tokenizer = None
-    _text_encoder = None
+    text_only = text and not audio_path
 
-    def _get_text_encoder():
-        nonlocal _text_tokenizer, _text_encoder
-        if _text_encoder is None:
-            _text_tokenizer = AutoTokenizer.from_pretrained(TEXT_MODEL_NAME)
-            _text_encoder = AutoModel.from_pretrained(TEXT_MODEL_NAME)
-            _text_encoder.eval()
-        return _text_tokenizer, _text_encoder
-
-    def preprocess_text(text: str) -> torch.Tensor:
-        tokenizer, encoder = _get_text_encoder()
-        inputs = tokenizer(
-            text,
-            padding="max_length",
-            truncation=True,
-            max_length=128,
-            return_tensors="pt",
-        )
-        with torch.no_grad():
-            outputs = encoder(**inputs)
-        features = outputs.last_hidden_state[:, 0, :]
-        return features
-
-    AUDIO_MODEL_NAME = "facebook/hubert-base-ls960"
-    _audio_processor = None
-    _audio_encoder = None
-
-    def _get_audio_encoder():
-        nonlocal _audio_processor, _audio_encoder
-        if _audio_encoder is None:
-            _audio_processor = Wav2Vec2FeatureExtractor.from_pretrained(AUDIO_MODEL_NAME)
-            _audio_encoder = HubertModel.from_pretrained(AUDIO_MODEL_NAME)
-            _audio_encoder.eval()
-        return _audio_processor, _audio_encoder
-
-    def preprocess_audio(audio_path: str) -> torch.Tensor:
-        processor, encoder = _get_audio_encoder()
-        waveform, sr = librosa.load(audio_path, sr=SAMPLE_RATE)
-        inputs = processor(
-            waveform,
-            sampling_rate=SAMPLE_RATE,
-            return_tensors="pt",
-        )
-        with torch.no_grad():
-            outputs = encoder(**inputs)
-        features = outputs.last_hidden_state.mean(dim=1)
-        return features
-
-    resolved_text = text
-
-    # Stage 1: Whisper Transcription
-    if audio_path and not resolved_text:
-        with ProfileStage("Whisper Transcription") as s:
-            transcript = transcribe_audio(audio_path)
-            resolved_text = transcript
-        stages.append(s.to_dict())
-    elif audio_path and resolved_text:
-        transcript = resolved_text
-
-    text_tensor: Optional[torch.Tensor] = None
-    audio_tensor: Optional[torch.Tensor] = None
-
-    # Stage 2: MentalBERT Inference
-    if resolved_text:
+    if text_only:
+        transcript = text
         with ProfileStage("MentalBERT Inference") as s:
-            text_tensor = preprocess_text(resolved_text)
+            emotion_label, confidence, prob_dict = classify_text_emotion(text)
+        stages.append(s.to_dict())
+        with ProfileStage("Cross-Modal Attention Fusion") as s:
+            pass
+        stages.append(s.to_dict())
+        with ProfileStage("Emotion Classification") as s:
+            pass
+        stages.append(s.to_dict())
+    else:
+        def preprocess_text(text: str) -> torch.Tensor:
+            tokenizer, encoder = _get_text_encoder()
+            inputs = tokenizer(
+                text,
+                padding="max_length",
+                truncation=True,
+                max_length=128,
+                return_tensors="pt",
+            )
+            with torch.no_grad():
+                outputs = encoder(**inputs)
+            features = outputs.last_hidden_state[:, 0, :]
+            return features
+
+        def preprocess_audio(audio_path: str) -> torch.Tensor:
+            processor, encoder = _get_audio_encoder()
+            waveform, sr = librosa.load(audio_path, sr=SAMPLE_RATE)
+            inputs = processor(
+                waveform,
+                sampling_rate=SAMPLE_RATE,
+                return_tensors="pt",
+            )
+            with torch.no_grad():
+                outputs = encoder(**inputs)
+            features = outputs.last_hidden_state.mean(dim=1)
+            return features
+
+        resolved_text = text
+
+        # Stage 1: Whisper Transcription
+        if audio_path and not resolved_text:
+            with ProfileStage("Whisper Transcription") as s:
+                transcript = transcribe_audio(audio_path)
+                resolved_text = transcript
+            stages.append(s.to_dict())
+        elif audio_path and resolved_text:
+            transcript = resolved_text
+
+        text_tensor: Optional[torch.Tensor] = None
+        audio_tensor: Optional[torch.Tensor] = None
+
+        # Stage 2: MentalBERT Inference
+        if resolved_text:
+            with ProfileStage("MentalBERT Inference") as s:
+                text_tensor = preprocess_text(resolved_text)
+            stages.append(s.to_dict())
+
+        # Stage 3: HuBERT Inference
+        if audio_path:
+            with ProfileStage("HuBERT Inference") as s:
+                audio_tensor = preprocess_audio(audio_path)
+            stages.append(s.to_dict())
+
+        if text_tensor is None and audio_tensor is None:
+            raise ValueError("At least one of text or audio must be provided.")
+
+        # Stage 4: Cross-Modal Attention Fusion
+        with ProfileStage("Cross-Modal Attention Fusion") as s:
+            logits = model(text_features=text_tensor, audio_features=audio_tensor)
         stages.append(s.to_dict())
 
-    # Stage 3: HuBERT Inference
-    if audio_path:
-        with ProfileStage("HuBERT Inference") as s:
-            audio_tensor = preprocess_audio(audio_path)
+        # Stage 5: Emotion Classification
+        with ProfileStage("Emotion Classification") as s:
+            probabilities = torch.softmax(logits, dim=-1)
+            probs_np = probabilities.detach().cpu().numpy().flatten()
+            pred_idx = int(np.argmax(probs_np))
+            confidence = float(probs_np[pred_idx])
+            emotion_label = EMOTION_LABELS[pred_idx]
+            prob_dict = {EMOTION_LABELS[i]: float(probs_np[i]) for i in range(len(EMOTION_LABELS))}
         stages.append(s.to_dict())
-
-    if text_tensor is None and audio_tensor is None:
-        raise ValueError("At least one of text or audio must be provided.")
-
-    # Stage 4: Cross-Modal Attention Fusion
-    with ProfileStage("Cross-Modal Attention Fusion") as s:
-        logits = model(text_features=text_tensor, audio_features=audio_tensor)
-    stages.append(s.to_dict())
-
-    # Stage 5: Emotion Classification
-    with ProfileStage("Emotion Classification") as s:
-        probabilities = torch.softmax(logits, dim=-1)
-        probs_np = probabilities.detach().cpu().numpy().flatten()
-        pred_idx = int(np.argmax(probs_np))
-        confidence = float(probs_np[pred_idx])
-        emotion_label = EMOTION_LABELS[pred_idx]
-        prob_dict = {EMOTION_LABELS[i]: float(probs_np[i]) for i in range(len(EMOTION_LABELS))}
-    stages.append(s.to_dict())
 
     # Aggregate totals
     total_latency = sum(st["latency_ms"] for st in stages)
