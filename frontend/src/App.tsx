@@ -1,13 +1,12 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
 import AnalyzePage from './pages/AnalyzePage';
 import HistoryPage from './pages/HistoryPage';
 import AboutPage from './pages/AboutPage';
 import ArchitecturePage from './pages/ArchitecturePage';
-import ReportPage from './pages/ReportPage';
+import FinalReportPage from './pages/FinalReportPage';
 import ExplainPage from './pages/ExplainPage';
-
 import PerformancePage from './pages/PerformancePage';
 
 export default function App() {
@@ -20,7 +19,8 @@ export default function App() {
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/architecture" element={<ArchitecturePage />} />
-          <Route path="/report" element={<ReportPage />} />
+          <Route path="/report" element={<Navigate to="/final-report" replace />} />
+          <Route path="/final-report" element={<FinalReportPage />} />
           <Route path="/explain" element={<ExplainPage />} />
           <Route path="/performance" element={<PerformancePage />} />
         </Route>

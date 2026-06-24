@@ -68,7 +68,7 @@ export default function ResultCard({ emotion, confidence, probabilities, timesta
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Detected Emotion</p>
             <h2 className="text-[clamp(1.8rem,4vw,3rem)] font-semibold tracking-heading leading-tight capitalize mt-0.5 text-foreground">{emotion}</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">Tension with negative valence.</p>
+            <p className="text-sm text-muted-foreground mt-0.5">{(confidence * 100).toFixed(1)}% confidence — {(probabilities[emotion.toLowerCase()] || 0) > 0.5 ? 'primary emotion significantly above baseline.' : 'distributed across multiple emotional states.'}</p>
           </div>
         </div>
         <div className="mt-5 pt-5 border-t border-border">

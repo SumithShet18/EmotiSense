@@ -11,9 +11,9 @@ export default function Navbar() {
     { to: '/analyze', label: 'Analyze' },
     { to: '/history', label: 'Dashboard' },
     { to: '/performance', label: 'Performance' },
+    { to: '/final-report', label: 'Final Report' },
     { to: '/explain', label: 'Explain' },
     { to: '/architecture', label: 'Architecture' },
-    { to: '/report', label: 'Report' },
   ];
 
   const isActive = (path: string) =>

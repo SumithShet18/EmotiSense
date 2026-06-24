@@ -113,47 +113,28 @@ export default function HomePage() {
           </motion.div>
         </div>
 
-        {/* Live stream demo */}
+        {/* Live recording visualization */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.4 }}
-          className="relative z-10 mt-16 max-w-lg mx-auto card p-5"
+          className="relative z-10 mt-16 max-w-lg mx-auto card p-6 text-center"
         >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-xs text-muted-foreground">Live multimodal stream</span>
-            <span className="text-[11px] text-muted-foreground/60">sample &middot; 16kHz &middot; mono</span>
+          <div className="flex items-center justify-center gap-1.5 mb-4">
+            {[1, 2, 3, 4, 5, 4, 3, 2, 1].map((h, i) => (
+              <div
+                key={i}
+                className="w-1.5 rounded-full bg-gradient-to-t from-primary to-accent animate-wave"
+                style={{
+                  height: `${h * 8}px`,
+                  animationDelay: `${i * 0.1}s`,
+                  animationDuration: '1.2s',
+                }}
+              />
+            ))}
           </div>
-          <div className="space-y-3">
-            <div>
-              <div className="flex items-center justify-between text-sm mb-1">
-                <span className="text-muted-foreground font-medium">Top class</span>
-                <span className="text-emotion-sad font-semibold">Sad 91%</span>
-              </div>
-              <div className="emotion-bar">
-                <div className="emotion-bar-fill bg-emotion-sad" style={{ width: '91%' }} />
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between text-sm mb-1">
-                <span className="text-muted-foreground font-medium">Secondary</span>
-                <span className="text-emotion-frustrated font-semibold">Frustrated 48%</span>
-              </div>
-              <div className="emotion-bar">
-                <div className="emotion-bar-fill bg-emotion-frustrated" style={{ width: '48%' }} />
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between text-sm mb-1">
-                <span className="text-muted-foreground font-medium">Baseline</span>
-                <span className="text-emotion-neutral font-semibold">Neutral 12%</span>
-              </div>
-              <div className="emotion-bar">
-                <div className="emotion-bar-fill bg-emotion-neutral" style={{ width: '12%' }} />
-              </div>
-            </div>
-          </div>
-          <div className="mt-4 pt-3 border-t border-border text-[11px] text-muted-foreground/40">Platform</div>
+          <p className="text-sm font-medium text-foreground">Real-time Audio Capture</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">Microphone input &middot; 16kHz &middot; Mono</p>
         </motion.div>
       </section>
 

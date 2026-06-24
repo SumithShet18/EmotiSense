@@ -194,3 +194,66 @@
     animation: pulse-ring 2s ease-out infinite;
   }
 }
+
+@page {
+  size: A4;
+  margin: 1.5cm;
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  nav, footer, .print\:hidden {
+    display: none !important;
+  }
+
+  .hidden.print\:block {
+    display: block !important;
+  }
+
+  .card {
+    background: #f8f9fa !important;
+    border: 1px solid #dee2e6 !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .text-foreground {
+    color: #000 !important;
+  }
+
+  .text-muted-foreground {
+    color: #495057 !important;
+  }
+
+  .text-muted-foreground\/60 {
+    color: #6c757d !important;
+  }
+
+  .border-border {
+    border-color: #dee2e6 !important;
+  }
+
+  .bg-white\/\[0\.02\],
+  .bg-white\/\[0\.03\],
+  .bg-white\/\[0\.04\],
+  .bg-white\/\[0\.05\],
+  .bg-white\/\[0\.06\] {
+    background-color: #f8f9fa !important;
+  }
+
+  .bg-destructive\/10 {
+    background-color: #fef2f2 !important;
+  }
+
+  section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

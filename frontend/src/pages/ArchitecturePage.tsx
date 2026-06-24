@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 
 const pipelineSteps = [
   { label: 'Voice Input', icon: '🎤', detail: 'User records or uploads audio via the browser (MediaRecorder API / file upload).' },
-  { label: 'Whisper ASR', icon: '📝', detail: 'OpenAI Whisper (large-v3) transcribes speech to text using a transformer encoder-decoder architecture.' },
+  { label: 'Whisper ASR', icon: '📝', detail: 'OpenAI Whisper (base) transcribes speech to text using a transformer encoder-decoder architecture — runs locally with deterministic caching.' },
   { label: 'MentalBERT', icon: '🧠', detail: 'A BERT-based model fine-tuned on mental health texts extracts semantic features from the transcript.' },
   { label: 'HuBERT', icon: '🔊', detail: 'Hidden-Unit BERT (HuBERT) extracts acoustic features from raw audio waveforms.' },
   { label: 'Cross-Modal Attention', icon: '⚡', detail: 'A multi-head attention layer fuses text features (MentalBERT) and audio features (HuBERT) into a unified representation.' },
@@ -31,23 +31,23 @@ const cloudComponents = [
     ],
   },
   {
-    title: 'Managed Database',
+    title: 'Database Layer',
     icon: '🗄️',
     items: [
-      'Supabase PostgreSQL (managed)',
+      'SQLite for local development',
+      'Supabase PostgreSQL (managed) for production',
       'RLS policies for secure access',
-      'Auto-backups and point-in-time recovery',
       'JSONB support for probability data',
     ],
   },
   {
-    title: 'Cloud Storage',
+    title: 'File Storage',
     icon: '📦',
     items: [
-      'Supabase Storage bucket (audio-files)',
-      'Public URL generation for playback',
-      'No local file storage',
-      'Scalable object storage (S3-compatible)',
+      'Local file system for development',
+      'Supabase Storage bucket (audio-files) for production',
+      'MD5-hash based transcription caching',
+      'Deterministic pipeline with no external dependencies',
     ],
   },
   {
@@ -182,9 +182,9 @@ export default function ArchitecturePage() {
             </div>
             {/* Flow arrows */}
             <div className="mt-6 text-xs text-muted-foreground/50 space-y-1">
-              <p>📤 Audio Upload → Supabase Storage → public URL stored in DB</p>
-              <p>🧠 Prediction → emotion + confidence + probabilities → Supabase DB</p>
-              <p>📊 History query → Backend reads Supabase DB → returns paginated results</p>
+              <p>📤 Audio Upload → Local file storage → path passed to inference pipeline</p>
+              <p>🧠 Prediction → emotion + confidence + probabilities → SQLite / Supabase DB</p>
+              <p>📊 History query → Backend reads DB → returns paginated results</p>
               <p>🔗 All services communicate over HTTPS; frontend uses VITE_API_URL</p>
             </div>
           </div>
@@ -193,27 +193,23 @@ export default function ArchitecturePage() {
 
       {/* Deployment Info */}
       <motion.div className="card p-6 sm:p-8" {...fadeUp}>
-        <h2 className="text-lg font-semibold text-foreground mb-4">Deployment URLs</h2>
+        <h2 className="text-lg font-semibold text-foreground mb-4">Deployment Targets</h2>
         <div className="space-y-2 text-sm">
           <div className="flex items-center gap-3">
             <span className="w-24 text-muted-foreground">Frontend:</span>
-            <a href="https://frontend-rose-nine-21.vercel.app" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-              https://frontend-rose-nine-21.vercel.app
-            </a>
+            <span className="text-foreground">Vercel (React SPA) or local dev server</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="w-24 text-muted-foreground">Backend:</span>
-            <a href="https://emotisense-backend.onrender.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-              https://emotisense-backend.onrender.com
-            </a>
+            <span className="text-foreground">Render (FastAPI + Uvicorn) or local dev server</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="w-24 text-muted-foreground">Database:</span>
-            <span className="text-foreground">Supabase PostgreSQL (managed)</span>
+            <span className="text-foreground">SQLite (dev) / Supabase PostgreSQL (production)</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="w-24 text-muted-foreground">Storage:</span>
-            <span className="text-foreground">Supabase Storage (bucket: audio-files)</span>
+            <span className="text-foreground">Local filesystem (dev) / Supabase Storage (production)</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="w-24 text-muted-foreground">CI/CD:</span>

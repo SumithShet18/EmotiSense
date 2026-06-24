@@ -43,7 +43,7 @@ const technologies = [
       'Trained on 680k hours of multilingual data',
       'Robust to background noise and accents',
       'Runs locally via faster-whisper inference',
-      'Small model: 461M parameters',
+      'Base model: 90M parameters (fast local inference)',
     ],
   },
   {
@@ -80,7 +80,7 @@ export default function AboutPage() {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {[
             { step: 'Voice Input', icon: '🎤', desc: 'Audio captured via microphone or file upload' },
-            { step: 'Whisper STT', icon: '📝', desc: 'Automatic speech transcription' },
+            { step: 'Whisper STT', icon: '📝', desc: 'Automatic speech transcription (base model)' },
             { step: 'Dual Encoding', icon: '🧠', desc: 'MentalBERT (text) + HuBERT (audio)' },
             { step: 'Cross-Attention', icon: '🔗', desc: 'Feature fusion via attention' },
             { step: 'Classification', icon: '📊', desc: '6-class emotion output' },

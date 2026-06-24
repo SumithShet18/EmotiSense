@@ -3,6 +3,7 @@ import logging
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import random
 
 import numpy as np
@@ -182,7 +183,7 @@ async def predict(
 
     _last_full_result = {
         "prediction_id": pred_id,
-        "timestamp": None,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "text_input": transcript or text_input or None,
         "audio_url": audio_url,
         "emotion": emotion,
@@ -220,6 +221,9 @@ async def get_last_result():
             raise HTTPException(status_code=404, detail="No predictions yet.")
         return FullResultResponse(
             prediction_id=pred["id"],
+            timestamp=pred.get("timestamp"),
+            text_input=pred.get("text_input"),
+            audio_url=pred.get("audio_url"),
             emotion=pred["emotion"],
             confidence=pred["confidence"],
             probabilities=pred.get("probabilities", {}),
