@@ -63,6 +63,20 @@ def _sqlite_init_db() -> None:
             energy_joules REAL NOT NULL
         );
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS xai_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prediction_id INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            reasoning TEXT,
+            token_importances TEXT,
+            modality_contributions TEXT,
+            audio_features TEXT,
+            attention_matrix TEXT,
+            uncertainty TEXT,
+            secondary_emotions TEXT
+        );
+    """)
     conn.commit()
     conn.close()
 
@@ -231,6 +245,50 @@ def get_total_count() -> int:
     return _sqlite_get_total_count()
 
 
+def _sqlite_insert_explanation(
+    prediction_id: str,
+    reasoning: str,
+    token_importances,
+    modality_contributions,
+    audio_features,
+    attention_matrix,
+    uncertainty,
+    secondary_emotions,
+):
+    conn = _get_connection()
+    import json
+    conn.execute(
+        """INSERT INTO xai_results (prediction_id, timestamp, reasoning, token_importances, modality_contributions, audio_features, attention_matrix, uncertainty, secondary_emotions)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            prediction_id,
+            datetime.now(timezone.utc).isoformat(),
+            reasoning,
+            json.dumps(token_importances) if token_importances else None,
+            json.dumps(modality_contributions) if modality_contributions else None,
+            json.dumps(audio_features) if audio_features else None,
+            json.dumps(attention_matrix) if attention_matrix else None,
+            json.dumps(uncertainty) if uncertainty else None,
+            json.dumps(secondary_emotions) if secondary_emotions else None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _sqlite_get_last_prediction_id():
+    conn = _get_connection()
+    row = conn.execute("SELECT id FROM emotion_logs ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    return row["id"] if row else None
+
+
+def get_last_prediction_id():
+    if _use_supabase:
+        return None
+    return _sqlite_get_last_prediction_id()
+
+
 def insert_explanation(
     prediction_id: str,
     reasoning: str,
@@ -253,7 +311,17 @@ def insert_explanation(
             uncertainty=uncertainty or {},
             secondary_emotions=secondary_emotions or [],
         )
-    return None
+    _sqlite_insert_explanation(
+        prediction_id=prediction_id,
+        reasoning=reasoning,
+        token_importances=token_importances,
+        modality_contributions=modality_contributions,
+        audio_features=audio_features,
+        attention_matrix=attention_matrix,
+        uncertainty=uncertainty,
+        secondary_emotions=secondary_emotions,
+    )
+    return prediction_id
 
 
 def search_predictions(query: str = "", emotion_filter: str = "", limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:

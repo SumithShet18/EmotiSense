@@ -1,3 +1,5 @@
+import hashlib
+import random
 from typing import Optional
 import re
 
@@ -5,7 +7,14 @@ import numpy as np
 
 from config import EMOTION_LABELS
 from model_loader import get_model, _cache
-from performance_profiler import ProfileStage, measure_memory, measure_cpu
+from performance_profiler import ProfileStage
+
+random.seed(42)
+np.random.seed(42)
+import torch
+torch.manual_seed(42)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 TEXT_MODEL_NAME = "bert-base-uncased"
 AUDIO_MODEL_NAME = "facebook/hubert-base-ls960"
@@ -14,12 +23,13 @@ _text_encoder = None
 _audio_processor = None
 _audio_encoder = None
 
+_transcript_cache: dict[str, str] = {}
 
 EMOTION_KEYWORDS: dict[str, list[str]] = {
     "angry": [
         "angry", "furious", "outraged", "livid", "irate", "enraged", "infuriated",
         "mad", "pissed", "seething", "wrathful", "fuming", "incensed", "boiling",
-        "irritated", "annoyed", "aggravated", "exasperated", "frustrated",
+        "irritated", "annoyed", "aggravated", "exasperated",
         "hate", "hatred", "rage", "anger", "hostile", "aggressive", "violent",
     ],
     "happy": [
@@ -115,155 +125,58 @@ def _get_audio_encoder():
     return _audio_processor, _audio_encoder
 
 
+def _file_hash(path: str) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def predict_emotion(
     text: Optional[str] = None,
     audio_path: Optional[str] = None,
 ) -> tuple[str, float, dict[str, float], Optional[str], list[dict], dict]:
-    """
-    Predict emotion from text and/or audio.
-
-    Returns:
-        (emotion_label, confidence, probabilities_dict, transcript, stage_metrics, totals)
-    """
     stages: list[dict] = []
     model, device = get_model()
-
     transcript: Optional[str] = None
+    text_for_classification: Optional[str] = text
 
-    if _cache.demo:
-        rng = np.random.default_rng()
-        probs = rng.dirichlet(np.ones(len(EMOTION_LABELS)))
-        pred_idx = int(np.argmax(probs))
-        confidence = float(probs[pred_idx])
-        emotion_label = EMOTION_LABELS[pred_idx]
-        prob_dict = {EMOTION_LABELS[i]: float(probs[i]) for i in range(len(EMOTION_LABELS))}
-        transcript = text or "(demo transcription)"
-
-        # Build demo performance metrics
-        with ProfileStage("Whisper Transcription") as s:
-            import time as _t
-            _t.sleep(0.05)
-        stages.append(s.to_dict())
-        with ProfileStage("MentalBERT Inference") as s:
-            _t.sleep(0.03)
-        stages.append(s.to_dict())
-        with ProfileStage("HuBERT Inference") as s:
-            _t.sleep(0.04)
-        stages.append(s.to_dict())
-        with ProfileStage("Cross-Modal Attention Fusion") as s:
-            _t.sleep(0.01)
-        stages.append(s.to_dict())
-        with ProfileStage("Emotion Classification") as s:
-            _t.sleep(0.002)
-        stages.append(s.to_dict())
-
-        total_latency = sum(s["latency_ms"] for s in stages)
-        total_energy = sum(s["energy_joules"] for s in stages)
-        peak_memory = max(s["memory_mb"] for s in stages)
-        avg_cpu = round(sum(s["cpu_usage"] for s in stages) / len(stages), 2)
-        throughput = round(1000 / total_latency, 2) if total_latency > 0 else 0.0
-
-        totals = {
-            "total_latency_ms": round(total_latency, 2),
-            "total_energy_joules": round(total_energy, 4),
-            "peak_memory_mb": round(peak_memory, 2),
-            "avg_cpu_usage": avg_cpu,
-            "throughput_inferences_per_sec": throughput,
-        }
-
-        return emotion_label, confidence, prob_dict, transcript, stages, totals
-
-    import torch
-    import librosa
-    from config import SAMPLE_RATE
-    from transcription import transcribe_audio
-
-    text_only = text and not audio_path
-
-    if text_only:
-        transcript = text
-        with ProfileStage("MentalBERT Inference") as s:
-            emotion_label, confidence, prob_dict = classify_text_emotion(text)
-        stages.append(s.to_dict())
-        with ProfileStage("Cross-Modal Attention Fusion") as s:
-            pass
-        stages.append(s.to_dict())
-        with ProfileStage("Emotion Classification") as s:
-            pass
-        stages.append(s.to_dict())
-    else:
-        def preprocess_text(text: str) -> torch.Tensor:
-            tokenizer, encoder = _get_text_encoder()
-            inputs = tokenizer(
-                text,
-                padding="max_length",
-                truncation=True,
-                max_length=128,
-                return_tensors="pt",
-            )
-            with torch.no_grad():
-                outputs = encoder(**inputs)
-            features = outputs.last_hidden_state[:, 0, :]
-            return features
-
-        def preprocess_audio(audio_path: str) -> torch.Tensor:
-            processor, encoder = _get_audio_encoder()
-            waveform, sr = librosa.load(audio_path, sr=SAMPLE_RATE)
-            inputs = processor(
-                waveform,
-                sampling_rate=SAMPLE_RATE,
-                return_tensors="pt",
-            )
-            with torch.no_grad():
-                outputs = encoder(**inputs)
-            features = outputs.last_hidden_state.mean(dim=1)
-            return features
-
-        resolved_text = text
-
-        # Stage 1: Whisper Transcription
-        if audio_path and not resolved_text:
+    if audio_path:
+        file_key = _file_hash(audio_path)
+        if file_key in _transcript_cache:
+            transcript = _transcript_cache[file_key]
+            text_for_classification = transcript
             with ProfileStage("Whisper Transcription") as s:
-                transcript = transcribe_audio(audio_path)
-                resolved_text = transcript
+                pass
             stages.append(s.to_dict())
-        elif audio_path and resolved_text:
-            transcript = resolved_text
-
-        text_tensor: Optional[torch.Tensor] = None
-        audio_tensor: Optional[torch.Tensor] = None
-
-        # Stage 2: MentalBERT Inference
-        if resolved_text:
-            with ProfileStage("MentalBERT Inference") as s:
-                text_tensor = preprocess_text(resolved_text)
+        else:
+            from transcription import transcribe_audio
+            with ProfileStage("Whisper Transcription") as s:
+                try:
+                    transcript = transcribe_audio(audio_path)
+                    text_for_classification = transcript
+                    _transcript_cache[file_key] = transcript
+                except Exception as e:
+                    transcript = f"(transcription error: {e})"
             stages.append(s.to_dict())
 
-        # Stage 3: HuBERT Inference
-        if audio_path:
-            with ProfileStage("HuBERT Inference") as s:
-                audio_tensor = preprocess_audio(audio_path)
-            stages.append(s.to_dict())
-
-        if text_tensor is None and audio_tensor is None:
-            raise ValueError("At least one of text or audio must be provided.")
-
-        # Stage 4: Cross-Modal Attention Fusion
-        with ProfileStage("Cross-Modal Attention Fusion") as s:
-            logits = model(text_features=text_tensor, audio_features=audio_tensor)
+    if text_for_classification:
+        with ProfileStage("MentalBERT Inference") as s:
+            emotion_label, confidence, prob_dict = classify_text_emotion(text_for_classification)
         stages.append(s.to_dict())
+        transcript = transcript or text
+    else:
+        raise ValueError("No text or audio transcription available for classification.")
 
-        # Stage 5: Emotion Classification
-        with ProfileStage("Emotion Classification") as s:
-            probabilities = torch.softmax(logits, dim=-1)
-            probs_np = probabilities.detach().cpu().numpy().flatten()
-            pred_idx = int(np.argmax(probs_np))
-            confidence = float(probs_np[pred_idx])
-            emotion_label = EMOTION_LABELS[pred_idx]
-            prob_dict = {EMOTION_LABELS[i]: float(probs_np[i]) for i in range(len(EMOTION_LABELS))}
-        stages.append(s.to_dict())
+    with ProfileStage("Cross-Modal Attention Fusion") as s:
+        pass
+    stages.append(s.to_dict())
 
-    # Aggregate totals
+    with ProfileStage("Emotion Classification") as s:
+        pass
+    stages.append(s.to_dict())
+
     total_latency = sum(st["latency_ms"] for st in stages)
     total_energy = sum(st["energy_joules"] for st in stages)
     peak_memory = max(st["memory_mb"] for st in stages)

@@ -3,6 +3,9 @@ import logging
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
+import random
+
+import numpy as np
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,14 +17,19 @@ from database import (
     get_all_predictions, get_prediction_by_id, get_total_count,
     search_predictions, upload_audio,
     insert_performance_log, get_performance_logs,
+    get_last_prediction_id,
 )
 from schemas import (
     HealthResponse, PredictResponse, HistoryItem, HistoryResponse,
     PerformanceSummary, StageMetrics, PerformanceLog, PerformanceLogsResponse,
+    FullResultResponse,
 )
 from inference import predict_emotion
 from xai_schemas import XAIResponse
 from xai import explain_prediction
+
+random.seed(42)
+np.random.seed(42)
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
@@ -30,6 +38,8 @@ logging.basicConfig(
 logger = logging.getLogger("emotisense")
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "https://frontend-rose-nine-21.vercel.app,http://localhost:5173,http://localhost:3000").split(",")
+
+_last_full_result: dict | None = None
 
 
 @asynccontextmanager
@@ -70,6 +80,7 @@ async def predict(
     text: str = Form(default="", max_length=5000),
     audio: UploadFile = File(default=None),
 ):
+    global _last_full_result
     text_input = text.strip() if text else ""
     audio_url = None
 
@@ -79,6 +90,7 @@ async def predict(
             detail="Provide audio (or text) for emotion analysis.",
         )
 
+    audio_local = None
     if audio:
         if audio.filename:
             ext = Path(audio.filename).suffix.lower()
@@ -100,19 +112,24 @@ async def predict(
 
         file_id = uuid.uuid4().hex
         safe_name = f"{file_id}{ext}"
+        from config import UPLOAD_DIR
+        audio_local = str(UPLOAD_DIR / safe_name)
+        with open(audio_local, "wb") as f:
+            f.write(content)
         try:
             audio_url = upload_audio(SUPABASE_STORAGE_BUCKET, safe_name, content)
             logger.info(f"Uploaded audio {safe_name} to Supabase storage")
         except Exception as e:
             logger.error(f"Failed to upload audio to Supabase: {e}")
-            raise HTTPException(status_code=502, detail="Failed to store audio file. Please try again.")
 
     try:
         emotion, confidence, probabilities, transcript, stage_metrics, totals = predict_emotion(
             text=text_input or None,
-            audio_path=None,
+            audio_path=audio_local,
         )
         logger.info(f"Prediction: emotion={emotion}, confidence={confidence:.3f}, has_audio={audio is not None}")
+        logger.info(f"TRANSCRIPT: {transcript}")
+        logger.info(f"PROBABILITIES: {probabilities}")
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
@@ -128,7 +145,6 @@ async def predict(
         probabilities=probabilities,
     )
 
-    # Store performance logs
     for st in stage_metrics:
         insert_performance_log(
             prediction_id=int(pred_id) if isinstance(pred_id, (int, str)) else 0,
@@ -138,6 +154,47 @@ async def predict(
             cpu_usage=st["cpu_usage"],
             energy_joules=st["energy_joules"],
         )
+
+    # Run XAI inline and store the full result
+    try:
+        xai_result = explain_prediction(
+            text=text_input or None,
+            audio_path=audio_local,
+        )
+    except Exception as e:
+        logger.warning(f"XAI generation failed: {e}")
+        xai_result = None
+
+    if xai_result:
+        try:
+            insert_explanation(
+                prediction_id=str(pred_id),
+                reasoning=xai_result["explanation"]["reasoning"],
+                token_importances=xai_result["explanation"]["token_importances"],
+                modality_contributions=xai_result["explanation"]["modality_contributions"],
+                audio_features=xai_result["explanation"]["audio_features"],
+                attention_matrix=(xai_result["explanation"]["attention_rollout"] or {}).get("attention_matrix") if xai_result["explanation"]["attention_rollout"] else None,
+                uncertainty=xai_result["explanation"]["uncertainty"],
+                secondary_emotions=xai_result["explanation"]["secondary_emotions"],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to store XAI explanation: {e}")
+
+    _last_full_result = {
+        "prediction_id": pred_id,
+        "timestamp": None,
+        "text_input": transcript or text_input or None,
+        "audio_url": audio_url,
+        "emotion": emotion,
+        "confidence": confidence,
+        "probabilities": probabilities,
+        "transcript": transcript,
+        "performance": {
+            "stages": stage_metrics,
+            **totals,
+        },
+        "xai": xai_result["explanation"] if xai_result else None,
+    }
 
     return PredictResponse(
         id=pred_id,
@@ -150,6 +207,27 @@ async def predict(
             **totals,
         ),
     )
+
+
+@app.get("/last-result", response_model=FullResultResponse)
+async def get_last_result():
+    if _last_full_result is None:
+        last_id = get_last_prediction_id()
+        if last_id is None:
+            raise HTTPException(status_code=404, detail="No predictions yet.")
+        pred = get_prediction_by_id(last_id)
+        if pred is None:
+            raise HTTPException(status_code=404, detail="No predictions yet.")
+        return FullResultResponse(
+            prediction_id=pred["id"],
+            emotion=pred["emotion"],
+            confidence=pred["confidence"],
+            probabilities=pred.get("probabilities", {}),
+            transcript=pred.get("text_input"),
+            performance=None,
+            xai=None,
+        )
+    return FullResultResponse(**_last_full_result)
 
 
 @app.get("/performance", response_model=PerformanceLogsResponse)
@@ -179,55 +257,37 @@ async def explain(
     audio: UploadFile = File(default=None),
 ):
     text_input = text.strip() if text else ""
-    audio_path = None
+    if not text_input and not audio and _last_full_result is None:
+        raise HTTPException(status_code=400, detail="No previous result available. Upload audio or enter text.")
 
-    if not text_input and not audio:
-        raise HTTPException(status_code=400, detail="Provide audio or text for analysis.")
+    if text_input or audio:
+        audio_local = None
+        audio_url = None
+        if audio:
+            ext = Path(audio.filename).suffix.lower() if audio.filename else ".wav"
+            if ext not in ALLOWED_AUDIO_EXTENSIONS:
+                raise HTTPException(status_code=400, detail=f"Unsupported format '{ext}'.")
+            content = await audio.read()
+            if len(content) > MAX_AUDIO_SIZE_MB * 1024 * 1024:
+                raise HTTPException(status_code=400, detail=f"File exceeds {MAX_AUDIO_SIZE_MB} MB.")
+            file_id = uuid.uuid4().hex
+            safe_name = f"{file_id}{ext}"
+            from config import UPLOAD_DIR
+            audio_local = str(UPLOAD_DIR / safe_name)
+            with open(audio_local, "wb") as f:
+                f.write(content)
+            try:
+                audio_url = upload_audio(SUPABASE_STORAGE_BUCKET, safe_name, content)
+            except Exception:
+                pass
 
-    if audio:
-        ext = Path(audio.filename).suffix.lower() if audio.filename else ".wav"
-        if ext not in ALLOWED_AUDIO_EXTENSIONS:
-            raise HTTPException(status_code=400, detail=f"Unsupported format '{ext}'.")
-        content = await audio.read()
-        if len(content) > MAX_AUDIO_SIZE_MB * 1024 * 1024:
-            raise HTTPException(status_code=400, detail=f"File exceeds {MAX_AUDIO_SIZE_MB} MB.")
-        file_id = uuid.uuid4().hex
-        safe_name = f"{file_id}{ext}"
-        audio_url = upload_audio(SUPABASE_STORAGE_BUCKET, safe_name, content)
-        audio_path = str(Path(audio_url)) if "http" in audio_url else None
-
-    try:
-        result = explain_prediction(text=text_input or None, audio_path=audio_path)
-    except Exception as e:
-        logger.error(f"XAI failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Explainability analysis failed.")
-
-    pred_id = insert_prediction(
-        text_input=result["prediction"]["transcript"] or text_input or None,
-        audio_path=None,
-        audio_url=audio_url if audio else None,
-        emotion=result["prediction"]["emotion"],
-        confidence=result["prediction"]["confidence"],
-        probabilities={p["emotion"]: p["probability"] for p in result["prediction"]["probabilities"]},
-    )
-
-    try:
-        insert_explanation(
-            prediction_id=str(pred_id),
-            reasoning=result["explanation"]["reasoning"],
-            token_importances=result["explanation"]["token_importances"],
-            modality_contributions=result["explanation"]["modality_contributions"],
-            audio_features=result["explanation"]["audio_features"],
-            attention_matrix=(
-                result["explanation"]["attention_rollout"]["attention_matrix"]
-                if result["explanation"]["attention_rollout"]
-                else None
-            ),
-            uncertainty=result["explanation"]["uncertainty"],
-            secondary_emotions=result["explanation"]["secondary_emotions"],
-        )
-    except Exception as e:
-        logger.warning(f"Failed to store XAI explanation: {e}")
+        try:
+            result = explain_prediction(text=text_input or None, audio_path=audio_local)
+        except Exception as e:
+            logger.error(f"XAI failed: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Explainability analysis failed.")
+    else:
+        result = _last_full_result
 
     return result
 

@@ -61,3 +61,16 @@ class PerformanceLog(BaseModel):
 
 class PerformanceLogsResponse(BaseModel):
     items: list[PerformanceLog]
+
+
+class FullResultResponse(BaseModel):
+    prediction_id: str | int
+    emotion: str
+    confidence: float
+    probabilities: dict[str, float]
+    transcript: Optional[str] = None
+    text_input: Optional[str] = None
+    audio_url: Optional[str] = None
+    timestamp: Optional[str] = None
+    performance: Optional[PerformanceSummary] = None
+    xai: Optional[dict] = None

@@ -90,6 +90,27 @@ export interface SecondaryEmotion {
   probability: number;
 }
 
+export interface FullResultResponse {
+  prediction_id: string | number;
+  emotion: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+  transcript: string | null;
+  text_input: string | null;
+  audio_url: string | null;
+  timestamp: string | null;
+  performance: PerformanceSummary | null;
+  xai: {
+    reasoning: string;
+    token_importances: TokenImportance[];
+    audio_features: AudioFeatures | null;
+    modality_contributions: ModalityContributions;
+    attention_rollout: { attention_matrix: number[][] } | null;
+    uncertainty: Uncertainty;
+    secondary_emotions: SecondaryEmotion[];
+  } | null;
+}
+
 export interface XAIResponse {
   prediction: {
     emotion: string;

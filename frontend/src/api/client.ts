@@ -112,3 +112,9 @@ export async function getPerformance(predictionId?: number) {
     items: import('../types').PerformanceLog[];
   }>(`/performance${params}`);
 }
+
+export async function getLastResult() {
+  return request<import('../types').FullResultResponse>('/last-result');
+}
+
+export type { FullResultResponse } from '../types';
