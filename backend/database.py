@@ -1,0 +1,352 @@
+import json
+import sqlite3
+from datetime import datetime, timezone
+from typing import Optional
+
+import logging
+from config import USE_SUPABASE, SUPABASE_CONFIGURED
+
+_use_supabase = USE_SUPABASE and SUPABASE_CONFIGURED
+if USE_SUPABASE and not SUPABASE_CONFIGURED:
+    logging.warning("USE_SUPABASE=true but SUPABASE_URL or SUPABASE_SERVICE_KEY missing. Falling back to SQLite.")
+
+if _use_supabase:
+    from supabase_client import (
+        init_supabase,
+        insert_prediction as supabase_insert,
+        get_all_predictions as supabase_get_all,
+        get_prediction_by_id as supabase_get_by_id,
+        get_total_count as supabase_get_count,
+        search_predictions as supabase_search,
+        upload_audio as supabase_upload_audio,
+    )
+
+import os
+from pathlib import Path
+DATABASE_PATH = Path(__file__).resolve().parent.parent / "database" / "emotisense.db"
+
+
+def _get_connection() -> sqlite3.Connection:
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
+
+
+def _sqlite_init_db() -> None:
+    conn = _get_connection()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS emotion_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            text_input TEXT,
+            audio_path TEXT,
+            emotion TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            probabilities TEXT
+        );
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS performance_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            prediction_id INTEGER NOT NULL,
+            component TEXT NOT NULL,
+            latency_ms REAL NOT NULL,
+            memory_mb REAL NOT NULL,
+            cpu_usage REAL NOT NULL,
+            energy_joules REAL NOT NULL
+        );
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS xai_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prediction_id INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            reasoning TEXT,
+            token_importances TEXT,
+            modality_contributions TEXT,
+            audio_features TEXT,
+            attention_matrix TEXT,
+            uncertainty TEXT,
+            secondary_emotions TEXT
+        );
+    """)
+    try:
+        conn.execute("ALTER TABLE xai_results ADD COLUMN ig_attributions TEXT;")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+
+def _sqlite_insert_prediction(
+    text_input: Optional[str],
+    audio_path: Optional[str],
+    emotion: str,
+    confidence: float,
+    probabilities: dict,
+) -> int:
+    conn = _get_connection()
+    cursor = conn.execute(
+        """INSERT INTO emotion_logs (timestamp, text_input, audio_path, emotion, confidence, probabilities)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (datetime.now(timezone.utc).isoformat(), text_input, audio_path, emotion, confidence, json.dumps(probabilities)),
+    )
+    conn.commit()
+    conn.close()
+    return cursor.lastrowid or 0
+
+
+def _sqlite_get_all_predictions(limit: int = 100, offset: int = 0) -> list[dict]:
+    conn = _get_connection()
+    rows = conn.execute(
+        "SELECT * FROM emotion_logs ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
+    ).fetchall()
+    conn.close()
+    results = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("probabilities"), str):
+            d["probabilities"] = json.loads(d["probabilities"])
+        results.append(d)
+    return results
+
+
+def _sqlite_get_prediction_by_id(prediction_id: int) -> Optional[dict]:
+    conn = _get_connection()
+    row = conn.execute("SELECT * FROM emotion_logs WHERE id = ?", (prediction_id,)).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    d = dict(row)
+    if isinstance(d.get("probabilities"), str):
+        d["probabilities"] = json.loads(d["probabilities"])
+    return d
+
+
+def _sqlite_get_total_count() -> int:
+    conn = _get_connection()
+    row = conn.execute("SELECT COUNT(*) as count FROM emotion_logs").fetchone()
+    conn.close()
+    return row["count"]
+
+
+def _sqlite_search_predictions(query: str = "", emotion_filter: str = "", limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+    conn = _get_connection()
+    conditions = []
+    params: list = []
+    if emotion_filter:
+        conditions.append("emotion = ?")
+        params.append(emotion_filter)
+    if query:
+        conditions.append("text_input LIKE ?")
+        params.append(f"%{query}%")
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    count_row = conn.execute(f"SELECT COUNT(*) as count FROM emotion_logs {where}", params).fetchone()
+    total = count_row["count"]
+    rows = conn.execute(
+        f"SELECT * FROM emotion_logs {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+        params + [limit, offset],
+    ).fetchall()
+    conn.close()
+    results = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("probabilities"), str):
+            d["probabilities"] = json.loads(d["probabilities"])
+        results.append(d)
+    return results, total
+
+
+def _sqlite_insert_performance_log(
+    prediction_id: int,
+    component: str,
+    latency_ms: float,
+    memory_mb: float,
+    cpu_usage: float,
+    energy_joules: float,
+) -> int:
+    conn = _get_connection()
+    cursor = conn.execute(
+        """INSERT INTO performance_logs (timestamp, prediction_id, component, latency_ms, memory_mb, cpu_usage, energy_joules)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (datetime.now(timezone.utc).isoformat(), prediction_id, component, latency_ms, memory_mb, cpu_usage, energy_joules),
+    )
+    conn.commit()
+    conn.close()
+    return cursor.lastrowid or 0
+
+
+def _sqlite_get_performance_logs(prediction_id: Optional[int] = None) -> list[dict]:
+    conn = _get_connection()
+    if prediction_id is not None:
+        rows = conn.execute(
+            "SELECT * FROM performance_logs WHERE prediction_id = ? ORDER BY id", (prediction_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM performance_logs ORDER BY id DESC LIMIT 200").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def init_db() -> None:
+    if _use_supabase:
+        init_supabase()
+    else:
+        _sqlite_init_db()
+
+
+def insert_prediction(
+    text_input: Optional[str] = None,
+    audio_path: Optional[str] = None,
+    emotion: str = "",
+    confidence: float = 0.0,
+    probabilities: Optional[dict] = None,
+    audio_url: Optional[str] = None,
+) -> str | int:
+    if probabilities is None:
+        probabilities = {}
+    if _use_supabase:
+        return supabase_insert(
+            transcript=text_input,
+            audio_url=audio_url,
+            emotion=emotion,
+            confidence=confidence,
+            probabilities=probabilities,
+        )
+    return _sqlite_insert_prediction(text_input, audio_path, emotion, confidence, probabilities)
+
+
+def get_all_predictions(limit: int = 100, offset: int = 0) -> list[dict]:
+    if _use_supabase:
+        return supabase_get_all(limit=limit, offset=offset)
+    return _sqlite_get_all_predictions(limit=limit, offset=offset)
+
+
+def get_prediction_by_id(prediction_id: str | int) -> Optional[dict]:
+    if _use_supabase:
+        return supabase_get_by_id(str(prediction_id))
+    return _sqlite_get_prediction_by_id(int(prediction_id))
+
+
+def get_total_count() -> int:
+    if _use_supabase:
+        return supabase_get_count()
+    return _sqlite_get_total_count()
+
+
+def _sqlite_insert_explanation(
+    prediction_id: str,
+    reasoning: str,
+    token_importances,
+    modality_contributions,
+    audio_features,
+    attention_matrix,
+    uncertainty,
+    secondary_emotions,
+    ig_attributions=None,
+):
+    conn = _get_connection()
+    import json
+    conn.execute(
+        """INSERT INTO xai_results (prediction_id, timestamp, reasoning, token_importances, modality_contributions, audio_features, attention_matrix, uncertainty, secondary_emotions, ig_attributions)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            prediction_id,
+            datetime.now(timezone.utc).isoformat(),
+            reasoning,
+            json.dumps(token_importances) if token_importances else None,
+            json.dumps(modality_contributions) if modality_contributions else None,
+            json.dumps(audio_features) if audio_features else None,
+            json.dumps(attention_matrix) if attention_matrix else None,
+            json.dumps(uncertainty) if uncertainty else None,
+            json.dumps(secondary_emotions) if secondary_emotions else None,
+            json.dumps(ig_attributions) if ig_attributions else None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _sqlite_get_last_prediction_id():
+    conn = _get_connection()
+    row = conn.execute("SELECT id FROM emotion_logs ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    return row["id"] if row else None
+
+
+def get_last_prediction_id():
+    if _use_supabase:
+        return None
+    return _sqlite_get_last_prediction_id()
+
+
+def insert_explanation(
+    prediction_id: str,
+    reasoning: str,
+    token_importances: list | None = None,
+    modality_contributions: dict | None = None,
+    audio_features: dict | None = None,
+    attention_matrix: list | None = None,
+    uncertainty: dict | None = None,
+    secondary_emotions: list | None = None,
+    ig_attributions: dict | None = None,
+) -> str | None:
+    if _use_supabase:
+        from supabase_client import insert_explanation as _si
+        return _si(
+            prediction_id=prediction_id,
+            reasoning=reasoning,
+            token_importances=token_importances or [],
+            modality_contributions=modality_contributions or {},
+            audio_features=audio_features,
+            attention_matrix=attention_matrix,
+            uncertainty=uncertainty or {},
+            secondary_emotions=secondary_emotions or [],
+        )
+    _sqlite_insert_explanation(
+        prediction_id=prediction_id,
+        reasoning=reasoning,
+        token_importances=token_importances,
+        modality_contributions=modality_contributions,
+        audio_features=audio_features,
+        attention_matrix=attention_matrix,
+        uncertainty=uncertainty,
+        secondary_emotions=secondary_emotions,
+        ig_attributions=ig_attributions,
+    )
+    return prediction_id
+
+
+def search_predictions(query: str = "", emotion_filter: str = "", limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+    if _use_supabase:
+        return supabase_search(query=query, emotion_filter=emotion_filter, limit=limit, offset=offset)
+    return _sqlite_search_predictions(query=query, emotion_filter=emotion_filter, limit=limit, offset=offset)
+
+
+def upload_audio(bucket: str, file_name: str, file_data: bytes) -> str:
+    if _use_supabase:
+        return supabase_upload_audio(bucket, file_name, file_data)
+    save_dir = Path(__file__).resolve().parent.parent / "database" / "uploads"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    path = save_dir / file_name
+    with open(path, "wb") as f:
+        f.write(file_data)
+    return str(path)
+
+
+def insert_performance_log(
+    prediction_id: int,
+    component: str,
+    latency_ms: float,
+    memory_mb: float,
+    cpu_usage: float,
+    energy_joules: float,
+) -> int:
+    return _sqlite_insert_performance_log(prediction_id, component, latency_ms, memory_mb, cpu_usage, energy_joules)
+
+
+def get_performance_logs(prediction_id: Optional[int] = None) -> list[dict]:
+    return _sqlite_get_performance_logs(prediction_id=prediction_id)

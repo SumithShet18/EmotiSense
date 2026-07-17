@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Environment
+.env
+*.env.local
+backend/.env
+
+# Database
+*.db
+*.sqlite3
+
+# Build output
+dist/
+build/
+
+# Uploads
+database/uploads/*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dataset (too large for git — ~5GB)
+dataset/IEMOCAP/
+
+# Preprocessed data (large — recreatable)
+dataset/raw_preprocessed.pt
+
+# Model checkpoints (large — ~830MB, use Git LFS or download)
+*.pth
+*.pt
+
+# Model embeddings cache
+models/embeddings.pt
+
+# Audio test files
+*.wav
+test_audio.*
+
+# Training logs
+*.txt
+train_log*.txt
+
+# PDF reports (generated)
+*.pdf
+
+# Temp files
+*.log
