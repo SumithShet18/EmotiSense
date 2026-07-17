@@ -1,56 +1,59 @@
 # EmotiSense
 
-> **Final NLP Submission Version** — Archived June 24, 2026
->
-> This is the stable NLP project archive. No further development occurs here.
-> Active development continues in the **EmotiSense_IDP** directory.
-
-**Multimodal AI Emotion Detection System** — analyzes text and speech to detect human emotions using MentalBERT, HuBERT, and Cross-Modal Attention Fusion.
+**Multimodal AI Emotion Detection System** — analyzes speech audio to detect human emotions using MentalBERT (text from Whisper transcription), HuBERT (raw audio), and Cross-Modal Attention Fusion.
 
 ![Frontend](https://img.shields.io/badge/Frontend-React%20%7C%20TypeScript%20%7C%20Tailwind-61DAFB)
 ![Backend](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%20%7C%20PyTorch-009688)
-![Database](https://img.shields.io/badge/Database-Supabase%20PostgreSQL-3ECF8E)
-![Deployment](https://img.shields.io/badge/Deployment-Vercel%20%7C%20Render-000000)
+![Model](https://img.shields.io/badge/Model-MentalBERT%20%7C%20HuBERT%20%7C%20Fusion-FF6F00)
 
 ---
 
 ## Architecture
 
 ```
-User → Frontend (Vercel) → Backend API (Render) → Model Inference → Supabase (DB + Storage)
+Audio Input ──┬──→ Whisper Transcription → MentalBERT (fine-tuned) ──┐
+              │                                                      │
+              └──→ VAD + Normalization → HuBERT (fine-tuned) ─────┤
+                                                                    │
+                        Cross-Modal Attention + Gated Residual Fusion
+                                                                    │
+                                                    5-Class Classifier
+                                                                    │
+                                              angry / happy / sad / neutral / frustrated
 ```
 
-| Layer | Technology | Hosting |
-|-------|-----------|---------|
-| Frontend | React + TypeScript + Tailwind + Vite | Vercel |
-| Backend | FastAPI + Python + Uvicorn | Render |
-| Database | PostgreSQL | Supabase |
-| Storage | S3-compatible object storage | Supabase Storage |
-| Model | MentalBERT + HuBERT + Cross-Modal Attention | PyTorch |
+- **Single entry point**: Audio recording only (no separate text input)
+- **Whisper (base)** transcribes speech → text
+- **MentalBERT** (fine-tuned `bert-base-uncased`, last 3 layers) encodes transcription
+- **HuBERT** (fine-tuned `hubert-base-ls960`, last 3 layers) encodes raw audio
+- **Cross-attention fusion** with learned gated residual combines both
+- **5 emotion classes**: angry, happy, sad, neutral, frustrated (excited → happy per IEMOCAP protocol)
 
-## Emotion Classes
+### Test Performance (IEMOCAP held-out)
 
-| Emotion | Description |
-|---------|-------------|
-| 😡 Angry | Frustration, irritation, hostility |
-| 😊 Happy | Joy, satisfaction, positivity |
-| 😢 Sad | Melancholy, disappointment, low mood |
-| 😐 Neutral | Calm, balanced, emotionally flat |
-| 🤩 Excited | Anticipation, enthusiasm, heightened positive affect |
-| 😤 Frustrated | Annoyance, irritation, blocked goals |
+| Metric | Value |
+|--------|-------|
+| Accuracy | 65.17% |
+| Macro F1 | 64.90% |
+
+| Class | Precision | Recall | F1 |
+|-------|-----------|--------|----|
+| Angry | 0.59 | 0.63 | 0.61 |
+| Happy | 0.87 | 0.63 | 0.73 |
+| Sad | 0.69 | 0.67 | 0.68 |
+| Neutral | 0.56 | 0.76 | 0.64 |
+| Frustrated | 0.60 | 0.57 | 0.59 |
 
 ## Features
 
-- **Multimodal Input** — Analyze text, audio, or both simultaneously
-- **Speech-to-Text** — Automatic transcription via OpenAI Whisper (large-v3)
-- **Text Understanding** — MentalBERT extracts semantic features
-- **Audio Understanding** — HuBERT extracts acoustic features
-- **Cross-Modal Fusion** — Multi-head attention fuses text + audio features
-- **6 Emotion Classes** — Angry, Happy, Sad, Neutral, Excited, Frustrated
-- **Cloud Persistence** — All predictions stored in Supabase PostgreSQL
-- **Audio Storage** — Uploaded audio stored in Supabase Storage with playback
-- **History Dashboard** — Search, filter, paginate past predictions
-- **Dark Theme UI** — Glass morphism design with Tailwind CSS
+- **Audio-only input** — record or upload; Whisper transcribes automatically
+- **Explainable AI** — token attention, modality contribution (gate %), Integrated Gradients
+- **Modality contribution** — per-prediction learned gate split (e.g., 65% text / 35% audio)
+- **Performance profiling** — per-stage latency, CPU, memory, energy estimation
+- **Interactive pipeline walkthrough** — Architecture page with dual-track visualization
+- **Printable PDF report** — 7-section report with cover page, ToC, page numbers
+- **History dashboard** — search, filter, paginate past predictions with charts
+- **Dual database** — SQLite local or Supabase cloud
 
 ## Setup
 
@@ -58,53 +61,45 @@ User → Frontend (Vercel) → Backend API (Render) → Model Inference → Supa
 
 - Python 3.11+
 - Node.js 18+
-- Supabase account (free tier)
 
-### 1. Clone & Backend Setup
+### 1. Clone
 
 ```bash
 git clone https://github.com/SumithShet18/EmotiSense.git
-cd EmotiSense/backend
-python -m venv venv
+cd EmotiSense
+```
 
-# Windows
-venv\Scripts\activate
+### 2. Download Model Checkpoint
 
-# macOS/Linux
-source venv/bin/activate
+The trained model (~830MB) is not stored in git. Download it from the [releases page](https://github.com/SumithShet18/EmotiSense/releases) and place at:
 
+```
+models/finetuned-final/mindlens_finetuned.pth
+```
+
+Alternatively, set `EMOTISENSE_DEMO=true` to run with random predictions (no model needed).
+
+### 3. Backend Setup
+
+```bash
+cd backend
 pip install -r requirements.txt
 ```
 
-### 2. Environment Variables
-
-Create `backend/.env` or set in your environment:
+Create `backend/.env`:
 
 ```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_KEY=your-service-role-key
-USE_SUPABASE=true
 EMOTISENSE_DEMO=false
 EMOTISENSE_DEVICE=cpu
-CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+USE_SUPABASE=false
+CORS_ORIGINS=http://localhost:5173
 ```
-
-### 3. Database Setup
-
-Run the migration script in your Supabase SQL Editor:
-
-```
-scripts/migration.sql
-```
-
-This creates the `emotion_logs` table and `audio-files` storage bucket.
 
 ### 4. Run Backend
 
 ```bash
 cd backend
-uvicorn app:app --reload --host 0.0.0.0 --port 8000
+uvicorn app:app --host 0.0.0.0 --port 8742
 ```
 
 ### 5. Frontend Setup
@@ -115,110 +110,29 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173
+Open **http://localhost:5173**
 
 ## API Endpoints
 
-| Method | Path | Description | Parameters |
-|--------|------|-------------|------------|
-| `GET` | `/health` | Health check | — |
-| `POST` | `/predict` | Emotion prediction | `text` (form, optional), `audio` (file, optional) |
-| `GET` | `/history` | Prediction history | `limit`, `offset`, `search`, `emotion` (query) |
-| `GET` | `/prediction/{id}` | Single prediction detail | `id` (path, UUID or int) |
-
-### POST /predict
-
-Accepts `multipart/form-data`:
-
-- `text` (optional, max 5000 chars) — Input text for analysis
-- `audio` (optional, .wav/.mp3/.m4a, max 10 MB) — Audio file for analysis
-
-Returns:
-
-```json
-{
-  "id": "uuid-string",
-  "transcript": "I am feeling great today",
-  "emotion": "happy",
-  "confidence": 0.94,
-  "probabilities": {
-    "angry": 0.01,
-    "happy": 0.94,
-    "sad": 0.01,
-    "neutral": 0.02,
-    "excited": 0.01,
-    "frustrated": 0.01
-  }
-}
-```
-
-## Database Schema
-
-```sql
-CREATE TABLE emotion_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    transcript TEXT,
-    emotion TEXT NOT NULL,
-    confidence DOUBLE PRECISION NOT NULL,
-    probabilities JSONB,
-    audio_url TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
-
-## Deployment
-
-### Frontend (Vercel)
-
-```bash
-cd frontend
-npx vercel --prod
-```
-
-Set environment variable in Vercel dashboard:
-
-| Key | Value |
-|-----|-------|
-| `VITE_API_URL` | `https://emotisense-backend.onrender.com` |
-
-### Backend (Render)
-
-1. Go to https://dashboard.render.com
-2. Click **New +** → **Web Service**
-3. Connect your GitHub repository
-4. Configure:
-
-| Field | Value |
-|-------|-------|
-| Name | `emotisense-backend` |
-| Runtime | Python 3 |
-| Build Command | `pip install -r backend/requirements.txt` |
-| Start Command | `cd backend && uvicorn app:app --host 0.0.0.0 --port $PORT` |
-
-5. Add environment variables in Render dashboard:
-
-| Key | Value |
-|-----|-------|
-| `SUPABASE_URL` | `https://your-project.supabase.co` |
-| `SUPABASE_SERVICE_KEY` | `your-service-role-key` |
-| `SUPABASE_ANON_KEY` | `your-anon-key` |
-| `USE_SUPABASE` | `true` |
-| `EMOTISENSE_DEMO` | `false` |
-| `CORS_ORIGINS` | `https://frontend-rose-nine-21.vercel.app` |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `POST` | `/predict` | Emotion prediction (FormData: `audio` or `text`) |
+| `GET` | `/last-result` | Latest prediction from memory |
+| `POST` | `/explain` | Full XAI with Integrated Gradients |
+| `GET` | `/history` | Paginated history with search/filter |
+| `GET` | `/prediction/{id}` | Single prediction detail |
+| `GET` | `/performance` | Performance logs |
 
 ## Tech Stack
 
-- **Frontend:** React 18, TypeScript, Tailwind CSS 3, Vite 6, Framer Motion, React Router 6
-- **Backend:** FastAPI, Python 3.11, Uvicorn, PyTorch
-- **ML Models:** MentalBERT, HuBERT, Cross-Attention Fusion, Whisper large-v3
-- **Cloud:** Supabase PostgreSQL, Supabase Storage, Vercel, Render
-- **DevOps:** Git, GitHub, CI/CD pipelines
+- **Frontend:** React 18, TypeScript, Tailwind CSS 3, Vite 6, Framer Motion, React Router 6, Recharts
+- **Backend:** FastAPI, Python 3.11+, Uvicorn, PyTorch
+- **ML Models:** MentalBERT (bert-base-uncased), HuBERT (hubert-base-ls960), Cross-Attention Fusion, faster-whisper (base)
+- **Training:** IEMOCAP dataset, 7,380 utterances, partial fine-tuning (last 3 layers)
+- **Database:** SQLite (local) or Supabase PostgreSQL
+- **Audio:** librosa, torchaudio, soundfile
 
 ## License
 
 MIT License — see [LICENSE](LICENSE)
-
----
-
-*EmotiSense — Project Report • June 2026*
